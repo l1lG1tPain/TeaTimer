@@ -1,0 +1,52 @@
+# Documentation
+*.md
+!README.md
+!CHANGELOG.md
+
+# Excel files
+*.xlsx
+*.xls
+*.csv
+
+# Node modules
+node_modules/
+npm-debug.log
+package-lock.json
+yarn.lock
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+dist/
+build/
+*.map
+
+# OS
+Thumbs.db
+.DS_Store
+
+# Temporary files
+temp/
+tmp/
+*.tmp
+
+# IDE project files
+*.iml
+.gradle/
+.project
+.classpath
+
+# Backup files
+*.backup
+*.bak

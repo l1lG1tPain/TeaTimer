@@ -1,0 +1,86 @@
+{
+  "name": "TeaTimer — помощник заварки",
+  "short_name": "TeaTimer",
+  "description": "Приложение для помощи в заварке китайского чая (гунфу-ча). Выбирайте сорт, крепость и получайте автоматические рекомендации по времени проливов.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FDF8EB",
+  "theme_color": "#FDF8EB",
+  "categories": ["lifestyle", "food", "productivity"],
+  "lang": "ru",
+  "dir": "ltr",
+  "icons": [
+    {
+      "src": "assets/favicon.ico",
+      "sizes": "32x32",
+      "type": "image/x-icon",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/TeaTimer.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/TeaTimer.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    }
+  ],
+  "screenshots": [
+    {
+      "src": "assets/TeaTimer.png",
+      "sizes": "540x720",
+      "type": "image/png",
+      "form_factor": "narrow"
+    },
+    {
+      "src": "assets/TeaTimer.png",
+      "sizes": "1280x720",
+      "type": "image/png",
+      "form_factor": "wide"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "Заварить чай",
+      "short_name": "Заварить",
+      "description": "Быстро начать сессию заварки",
+      "url": "/?action=brew",
+      "icons": [
+        {
+          "src": "assets/TeaTimer.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    },
+    {
+      "name": "Каталог чаёв",
+      "short_name": "Каталог",
+      "description": "Просмотреть каталог всех чаёв",
+      "url": "/?action=catalog",
+      "icons": [
+        {
+          "src": "assets/TeaTimer.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
+  ],
+  "share_target": {
+    "action": "/share",
+    "method": "POST",
+    "enctype": "multipart/form-data",
+    "params": {
+      "title": "title",
+      "text": "text",
+      "url": "url"
+    }
+  }
+}

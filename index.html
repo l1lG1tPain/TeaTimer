@@ -1,0 +1,45 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="theme-color" content="#FDF8EB" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#1F1A10" media="(prefers-color-scheme: dark)">
+<title>TeaTimer</title>
+<link rel="manifest" href="manifest.json">
+<link rel="icon" type="image/x-icon" href="assets/favicon.ico">
+<link rel="apple-touch-icon" href="assets/TeaTimer.png">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,500;0,600;0,700;1,400&family=Karla:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+</head>
+<body>
+<!-- Loader / Splash Screen -->
+<div id="app-loader" class="app-loader">
+  <div class="loader-content">
+    <img src="assets/TeaTimer-l.png" alt="TeaTimer" class="loader-logo">
+    <h1 class="loader-title">TeaTimer</h1>
+    <p class="loader-subtitle" id="loader-subtitle">Завариваем чай...</p>
+    <div class="loader-spinner"></div>
+  </div>
+</div>
+
+<div id="app">
+  <!-- Экраны будут рендериться через JS -->
+</div>
+
+<!-- Аудио для уведомлений -->
+<audio id="gong-sound" preload="auto">
+  <source src="assets/sounds/Гонг.wav" type="audio/wav">
+</audio>
+<audio id="bell-sound" preload="auto">
+  <source src="assets/sounds/Колокольчик.wav" type="audio/wav">
+</audio>
+<audio id="soft-ring-sound" preload="auto">
+  <source src="assets/sounds/Мягкий звон.wav" type="audio/wav">
+</audio>
+
+<script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,1697 @@
+/* ============================================
+   TeaTimer — Design System & Styles
+   ============================================ */
+
+/* CSS Variables — Light (default) */
+:root {
+  --bg-primary: #FDF8EB;
+  --btn-text-color: #FDF8EB;
+  --bg-secondary: #F7F0DC;
+  --bg-card: #FDF8EB;
+  --bg-input: #F7F0DC;
+  --text-primary: #1E1B15;
+  --text-secondary: #605641;
+  --text-tertiary: #8E8265;
+  --text-muted: #B9AB88;
+  --border-light: #F2E9D3;
+  --border-medium: #EDE3CC;
+  --border-strong: #DFD3B8;
+  --accent-green: #2E6B2C;
+  --accent-green-hover: #245A22;
+  --accent-amber: #C8801C;
+  --accent-amber-light: #E8A93F;
+  --accent-red: #B0431F;
+  --accent-red-hover: #8E3518;
+  --timer-bg: #FDF8EB;
+  --nav-active-bg: #F4EBD5;
+  --nav-inactive: #A99B7C;
+  --shadow: rgba(30,27,21,.12);
+  --chart-bar: #CCBF9C;
+  --chart-bar-active: #C8801C;
+}
+
+/* Dark theme */
+[data-theme="dark"] {
+  --bg-primary: #1F1A10;
+  --bg-secondary: #262013;
+  --bg-card: #1F1A10;
+  --bg-input: #262013;
+  --text-primary: #F0E7CF;
+  --text-secondary: #C4B79A;
+  --text-tertiary: #9D9273;
+  --text-muted: #7A6E52;
+  --border-light: #302819;
+  --border-medium: #3A3223;
+  --border-strong: #3A3223;
+  --accent-green: #35792F;
+  --accent-green-hover: #2E6B2C;
+  --accent-amber: #E8A93F;
+  --accent-amber-light: #F2CD79;
+  --accent-red: #E08D5F;
+  --accent-red-hover: #C47A4E;
+  --timer-bg: #15120A;
+  --nav-active-bg: #2C2418;
+  --nav-inactive: #7A6E52;
+  --shadow: rgba(20,18,12,.3);
+  --chart-bar: #6B6047;
+  --chart-bar-active: #E8A93F;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --btn-text-color: #F0E7CF;
+    --bg-primary: #1F1A10;
+    --bg-secondary: #262013;
+    --bg-card: #1F1A10;
+    --bg-input: #262013;
+    --text-primary: #F0E7CF;
+    --text-secondary: #C4B79A;
+    --text-tertiary: #9D9273;
+    --text-muted: #7A6E52;
+    --border-light: #302819;
+    --border-medium: #3A3223;
+    --border-strong: #3A3223;
+    --accent-green: #35792F;
+    --accent-green-hover: #2E6B2C;
+    --accent-amber: #E8A93F;
+    --accent-amber-light: #F2CD79;
+    --accent-red: #E08D5F;
+    --accent-red-hover: #C47A4E;
+    --timer-bg: #15120A;
+    --nav-active-bg: #2C2418;
+    --nav-inactive: #7A6E52;
+    --shadow: rgba(20,18,12,.3);
+    --chart-bar: #6B6047;
+    --chart-bar-active: #E8A93F;
+  }
+
+  /* Fix dark theme button visibility */
+  .chip-active {
+    background: var(--accent-green);
+    color: #F0E7CF;
+  }
+
+  .btn-secondary {
+    background: var(--bg-secondary);
+    color: var(--text-primary);
+    border-color: var(--border-medium);
+  }
+
+  .btn-secondary:hover,
+  .btn-secondary:active {
+    border-color: var(--accent-green);
+    background: var(--bg-card);
+  }
+}
+
+
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+  -webkit-tap-highlight-color: transparent;
+}
+
+html, body {
+  height: 100%;
+  font-family: 'Karla', 'Helvetica Neue', sans-serif;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  overflow: hidden;
+}
+
+#app {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  position: relative;
+}
+
+/* ============================================
+   Typography
+   ============================================ */
+.font-display {
+  font-family: 'Cormorant Garamond', Georgia, serif;
+}
+
+.font-body {
+  font-family: 'Karla', 'Helvetica Neue', sans-serif;
+}
+
+/* ============================================
+   Animations
+   ============================================ */
+@keyframes steam {
+  0% { transform: translateY(0) scaleX(1); opacity: 0; }
+  30% { opacity: 0.5; }
+  100% { transform: translateY(-26px) scaleX(1.4); opacity: 0; }
+}
+
+@keyframes ripple {
+  0% { transform: scale(0.85); opacity: 0.55; }
+  100% { transform: scale(1.35); opacity: 0; }
+}
+
+@keyframes sway {
+  0%, 100% { transform: translateX(0); }
+  50% { transform: translateX(6px); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse-ring {
+  0% { transform: scale(0.95); opacity: 0.7; }
+  50% { transform: scale(1.05); opacity: 0.3; }
+  100% { transform: scale(0.95); opacity: 0.7; }
+}
+
+/* ============================================
+   Screen Container
+   ============================================ */
+.screen {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  display: none;
+  animation: fadeIn 0.3s ease-out;
+  padding-bottom: calc(80px + env(safe-area-inset-bottom));
+  -webkit-overflow-scrolling: touch;
+}
+
+.screen.active {
+  display: block;
+}
+
+.screen-content {
+  max-width: 430px;
+  margin: 0 auto;
+  padding: 24px 20px;
+}
+
+/* ============================================
+   Header / Section Headers
+   ============================================ */
+.section-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 20px;
+}
+
+.section-header h2 {
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-weight: 500;
+  font-size: 28px;
+  line-height: 1.1;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+.section-header .line {
+  height: 1px;
+  flex: 1;
+  background: var(--border-strong);
+}
+
+.overline {
+  font-family: 'Karla', sans-serif;
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+  display: block;
+  margin-bottom: 6px;
+}
+
+/* ============================================
+   Buttons
+   ============================================ */
+.btn-primary {
+  border: none;
+  border-radius: 28px;
+  background: var(--accent-green);
+  color: var(--btn-text-color);
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-weight: 600;
+  font-size: 28px;
+  line-height: 1;
+  padding: 20px 32px;
+  cursor: pointer;
+  width: 100%;
+  transition: background 0.2s;
+  text-align: center;
+}
+
+.btn-primary:hover,
+.btn-primary:active {
+  background: var(--accent-green-hover);
+}
+
+.btn-primary-lg {
+  height: 96px;
+  border-radius: 26px;
+  font-size: 32px;
+}
+
+.btn-secondary {
+  border: 1px solid var(--border-strong);
+  border-radius: 26px;
+  background: var(--bg-card);
+  color: var(--text-secondary);
+  font-family: 'Karla', sans-serif;
+  font-weight: 600;
+  font-size: 14px;
+  line-height: 1;
+  padding: 16px 24px;
+  cursor: pointer;
+  transition: border-color 0.2s;
+  text-align: center;
+}
+
+.btn-secondary:hover,
+.btn-secondary:active {
+  border-color: var(--text-muted);
+}
+
+.btn-danger {
+  color: var(--accent-red);
+  border-color: var(--border-strong);
+}
+
+.btn-danger:hover,
+.btn-danger:active {
+  border-color: var(--accent-red);
+}
+
+.btn-dashed {
+  border: 1px dashed var(--text-muted);
+  background: transparent;
+  color: var(--text-secondary);
+}
+
+.btn-dashed:hover,
+.btn-dashed:active {
+  border-color: var(--accent-green);
+  color: var(--accent-green);
+}
+
+.btn-icon {
+  width: 64px;
+  height: 64px;
+  border-radius: 20px;
+  border: 1px solid var(--border-strong);
+  background: var(--accent-green);
+  color: var(--bg-primary);
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-weight: 500;
+  font-size: 24px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.btn-icon:hover,
+.btn-icon:active {
+  border-color: var(--accent-green);
+  background: var(--accent-green-hover);
+}
+
+/* ============================================
+   Cards & Lists
+   ============================================ */
+.card {
+  background: var(--bg-card);
+  border: 1px solid var(--border-strong);
+  border-radius: 20px;
+  padding: 18px;
+}
+
+.list-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--border-light);
+  cursor: pointer;
+  transition: opacity 0.15s;
+}
+
+.list-row:last-child {
+  border-bottom: none;
+}
+
+.list-row:active {
+  opacity: 0.7;
+}
+
+.list-row .accent-bar {
+  width: 8px;
+  height: 34px;
+  border-radius: 99px;
+  flex-shrink: 0;
+}
+
+.list-row .row-content {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.list-row .row-title {
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-weight: 500;
+  font-size: 19px;
+  line-height: 1.2;
+  color: var(--text-primary);
+}
+
+.list-row .row-meta {
+  font-family: 'Karla', sans-serif;
+  font-weight: 400;
+  font-size: 13px;
+  line-height: 1;
+  color: var(--text-tertiary);
+}
+
+.list-row .row-badge {
+  font-family: 'Karla', sans-serif;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--accent-amber);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+/* ============================================
+   Chips & Tags
+   ============================================ */
+.chip {
+  padding: 8px 14px;
+  border-radius: 99px;
+  font-family: 'Karla', sans-serif;
+  font-weight: 500;
+  font-size: 13px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.15s;
+  white-space: nowrap;
+}
+
+.chip-active {
+  background: var(--accent-green);
+  color: var(--bg-primary);
+  font-weight: 600;
+}
+
+.chip-inactive {
+  border: 1px solid var(--border-strong);
+  color: var(--text-secondary);
+  background: transparent;
+}
+
+.chip-inactive:hover {
+  border-color: var(--text-muted);
+}
+
+.tag {
+  padding: 7px 12px;
+  border-radius: 99px;
+  background: var(--bg-secondary);
+  font-family: 'Karla', sans-serif;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--text-secondary);
+}
+
+/* ============================================
+   Segmented Control
+   ============================================ */
+.segmented {
+  display: flex;
+  gap: 0;
+  padding: 5px;
+  background: var(--bg-secondary);
+  border-radius: 16px;
+}
+
+.segmented .segment {
+  flex: 1;
+  text-align: center;
+  padding: 13px 0;
+  border-radius: 12px;
+  font-family: 'Karla', sans-serif;
+  font-weight: 500;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: all 0.15s;
+  color: var(--text-secondary);
+  border: none;
+  background: transparent;
+}
+
+.segmented .segment.active {
+  background: var(--accent-green);
+  color: var(--bg-primary);
+  font-weight: 600;
+}
+
+/* ============================================
+   Toggle Switch
+   ============================================ */
+.toggle {
+  width: 50px;
+  height: 30px;
+  border-radius: 99px;
+  background: var(--border-strong);
+  display: flex;
+  align-items: center;
+  padding: 0 4px;
+  cursor: pointer;
+  transition: background 0.2s;
+  flex-shrink: 0;
+}
+
+.toggle.on {
+  background: var(--accent-green);
+  justify-content: flex-end;
+}
+
+.toggle .knob {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--bg-card);
+  transition: transform 0.2s;
+}
+
+/* ============================================
+   Search Input
+   ============================================ */
+.search-box {
+  height: 52px;
+  border-radius: 16px;
+  background: var(--bg-secondary);
+  display: flex;
+  align-items: center;
+  padding: 0 16px;
+  gap: 10px;
+}
+
+.search-box input {
+  flex: 1;
+  border: none;
+  background: transparent;
+  font-family: 'Karla', sans-serif;
+  font-size: 16px;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.search-box input::placeholder {
+  color: var(--text-muted);
+}
+
+/* ============================================
+   Slider / Stepper
+   ============================================ */
+.slider-track {
+  width: 100%;
+  height: 4px;
+  background: var(--border-medium);
+  border-radius: 99px;
+  position: relative;
+}
+
+.slider-fill {
+  position: absolute;
+  left: 0;
+  top: 0;
+  height: 4px;
+  background: var(--accent-green);
+  border-radius: 99px;
+}
+
+.slider-thumb {
+  position: absolute;
+  top: -13px;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: var(--bg-card);
+  border: 1.5px solid var(--accent-green);
+  cursor: pointer;
+}
+
+/* ============================================
+   Stat Tiles
+   ============================================ */
+.stat-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1fr;
+  gap: 1px;
+  background: var(--border-medium);
+  border: 1px solid var(--border-medium);
+  border-radius: 18px;
+  overflow: hidden;
+}
+
+.stat-tile {
+  background: var(--bg-card);
+  padding: 14px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stat-tile .value {
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-weight: 500;
+  font-size: 26px;
+  line-height: 1;
+  color: var(--text-primary);
+}
+
+.stat-tile .label {
+  font-family: 'Karla', sans-serif;
+  font-weight: 500;
+  font-size: 10px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+/* ============================================
+   Info Grid (Tea Detail)
+   ============================================ */
+.info-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1px;
+  background: var(--border-medium);
+  border: 1px solid var(--border-medium);
+  border-radius: 18px;
+  overflow: hidden;
+}
+
+.info-cell {
+  background: var(--bg-card);
+  padding: 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.info-cell .label {
+  font-family: 'Karla', sans-serif;
+  font-weight: 600;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.info-cell .value {
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-weight: 500;
+  font-size: 22px;
+  line-height: 1;
+  color: var(--text-primary);
+  white-space: nowrap;
+}
+
+/* ============================================
+   Timer Screen
+   ============================================ */
+.timer-screen {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  display: none;
+  flex-direction: column;
+  background: var(--timer-bg);
+  overflow: hidden;
+}
+
+.timer-screen.active {
+  display: flex;
+}
+
+.timer-fill {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  transition: height 1s linear;
+  opacity: 0.62;
+}
+
+.timer-fill-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 2px;
+  opacity: 0.8;
+}
+
+.timer-header {
+  position: relative;
+  padding: 22px 26px 0;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+
+.timer-header .status {
+  font-family: 'Karla', sans-serif;
+  font-weight: 600;
+  font-size: 12px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.timer-header .time {
+  font-family: 'Karla', sans-serif;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--text-tertiary);
+}
+
+.timer-body {
+  position: relative;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 18px;
+  padding: 0 26px;
+}
+
+.timer-dial {
+  position: relative;
+  width: 210px;
+  height: 210px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.timer-dial .ring {
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  border: 1px solid var(--border-strong);
+}
+
+.timer-dial .ring-1 {
+  animation: ripple 4.5s ease-out infinite;
+}
+
+.timer-dial .ring-2 {
+  animation: ripple 4.5s ease-out 2.2s infinite;
+}
+
+.timer-dial .steam {
+  position: absolute;
+  top: -34px;
+  width: 3px;
+  height: 30px;
+  border-radius: 99px;
+  background: var(--text-muted);
+  animation: steam 3.6s ease-out infinite;
+}
+
+.timer-dial .steam-2 {
+  left: 118px;
+  animation-delay: 1.4s;
+}
+
+.timer-dial .dial-inner {
+  width: 210px;
+  height: 210px;
+  border-radius: 50%;
+  background: var(--timer-bg);
+  border: 1px solid var(--border-strong);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  position: relative;
+  z-index: 2;
+}
+
+.timer-dial .infusion-counter {
+  font-family: 'Karla', sans-serif;
+  font-weight: 600;
+  font-size: 11px;
+  letter-spacing: 0.2em;
+  text-transform: uppercase;
+  color: var(--accent-amber);
+}
+
+.timer-dial .timer-display {
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-weight: 400;
+  font-size: 72px;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.03em;
+  color: var(--text-primary);
+}
+
+.timer-info {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  position: relative;
+  z-index: 2;
+}
+
+.timer-info .tea-name {
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-weight: 500;
+  font-size: 24px;
+  line-height: 1.2;
+  text-align: center;
+  color: var(--text-primary);
+}
+
+.timer-info .tea-meta {
+  font-family: 'Karla', sans-serif;
+  font-weight: 400;
+  font-size: 14px;
+  line-height: 1.3;
+  color: var(--text-tertiary);
+}
+
+.timer-actions {
+  position: relative;
+  padding: 0 22px calc(22px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  z-index: 2;
+}
+
+.timer-actions .btn-pour {
+  border: none;
+  height: 150px;
+  border-radius: 75px;
+  background: var(--text-primary);
+  color: var(--bg-primary);
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-weight: 600;
+  font-size: 40px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.2s;
+}
+
+.timer-actions .btn-pour:hover,
+.timer-actions .btn-pour:active {
+  background: var(--accent-green);
+}
+
+.timer-actions .row {
+  display: flex;
+  gap: 12px;
+}
+
+/* ============================================
+   Bottom Navigation
+   ============================================ */
+.bottom-nav {
+  position: fixed;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  background: var(--bg-primary);
+  border-top: 1px solid var(--border-medium);
+  padding: 10px 16px calc(20px + env(safe-area-inset-bottom));
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  z-index: 50;
+}
+
+.nav-item {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 7px;
+  padding: 6px 14px 4px;
+  border-radius: 14px;
+  min-width: 64px;
+  cursor: pointer;
+  transition: background 0.15s;
+  border: none;
+  background: transparent;
+}
+
+.nav-item.active {
+  background: var(--nav-active-bg);
+}
+
+.nav-item .icon {
+  width: 20px;
+  height: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.nav-item .icon svg {
+  stroke: var(--nav-inactive);
+  stroke-width: 1.5;
+  fill: none;
+}
+
+.nav-item.active .icon svg {
+  stroke: var(--accent-green);
+}
+
+.nav-item .label {
+  font-family: 'Karla', sans-serif;
+  font-weight: 500;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--nav-inactive);
+}
+
+.nav-item.active .label {
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* ============================================
+   Custom Scenario
+   ============================================ */
+.scenario-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 12px 16px;
+  border-radius: 16px;
+  background: var(--bg-secondary);
+}
+
+.scenario-row .idx {
+  width: 20px;
+  font-family: 'Karla', sans-serif;
+  font-weight: 500;
+  font-size: 14px;
+  color: var(--text-tertiary);
+}
+
+.scenario-row .bar-bg {
+  flex: 1;
+  height: 6px;
+  border-radius: 99px;
+  background: var(--border-medium);
+  overflow: hidden;
+}
+
+.scenario-row .bar-fill {
+  display: block;
+  height: 6px;
+  border-radius: 99px;
+  background: var(--accent-amber);
+  transition: width 0.3s;
+}
+
+.scenario-row .sec {
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-weight: 500;
+  font-size: 22px;
+  font-variant-numeric: tabular-nums;
+  min-width: 48px;
+  text-align: right;
+  background: transparent;
+  border: none;
+  color: var(--text-primary);
+  outline: none;
+}
+
+.scenario-row .unit {
+  font-family: 'Karla', sans-serif;
+  font-weight: 500;
+  font-size: 12px;
+  color: var(--text-tertiary);
+}
+
+/* ============================================
+   History
+   ============================================ */
+.session-card {
+  padding: 18px;
+  border-radius: 20px;
+  border: 1px solid var(--border-strong);
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.session-card .header {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+}
+
+.session-card .header .title {
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-weight: 500;
+  font-size: 20px;
+  line-height: 1.2;
+  color: var(--text-primary);
+}
+
+.session-card .header .rating {
+  font-family: 'Karla', sans-serif;
+  font-weight: 400;
+  font-size: 15px;
+  color: var(--accent-amber);
+}
+
+.session-card .meta {
+  display: flex;
+  gap: 16px;
+  font-family: 'Karla', sans-serif;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--text-tertiary);
+}
+
+.session-card .chart {
+  display: flex;
+  gap: 4px;
+  align-items: flex-end;
+  height: 44px;
+}
+
+.session-card .chart .bar {
+  flex: 1;
+  background: var(--chart-bar);
+  border-radius: 4px;
+  transition: height 0.3s;
+  min-height: 4px;
+}
+
+.session-card .chart .bar.highlight {
+  background: var(--chart-bar-active);
+}
+
+.session-card .note {
+  font-family: 'Karla', sans-serif;
+  font-weight: 400;
+  font-size: 15px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  margin: 0;
+}
+
+.history-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px 0;
+  border-bottom: 1px solid var(--border-light);
+  cursor: pointer;
+}
+
+.history-row:last-child {
+  border-bottom: none;
+}
+
+.history-row .time {
+  font-family: 'Karla', sans-serif;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--text-tertiary);
+  width: 44px;
+  flex-shrink: 0;
+}
+
+.history-row .name {
+  flex: 1;
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-weight: 500;
+  font-size: 18px;
+  line-height: 1.2;
+  color: var(--text-primary);
+}
+
+.history-row .info {
+  font-family: 'Karla', sans-serif;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--text-tertiary);
+  white-space: nowrap;
+}
+
+/* ============================================
+   Settings
+   ============================================ */
+.settings-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 14px 0;
+  border-bottom: 1px solid var(--border-light);
+}
+
+.settings-row .label {
+  font-family: 'Karla', sans-serif;
+  font-weight: 400;
+  font-size: 18px;
+  line-height: 1.2;
+  color: var(--text-primary);
+}
+
+.settings-row .sublabel {
+  font-family: 'Karla', sans-serif;
+  font-weight: 400;
+  font-size: 13px;
+  line-height: 1.3;
+  color: var(--text-tertiary);
+}
+
+/* ============================================
+   Home Screen Specific
+   ============================================ */
+.hero-btn {
+  width: 100%;
+  border: none;
+  height: 120px;
+  border-radius: 28px;
+  background: var(--accent-green);
+  color: var(--btn-text-color);
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 26px;
+  cursor: pointer;
+  transition: background 0.2s;
+  margin-bottom: 8px;
+}
+
+.hero-btn:hover,
+.hero-btn:active {
+  background: var(--accent-green-hover);
+}
+
+.hero-btn .title {
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-weight: 600;
+  font-size: 32px;
+  line-height: 1;
+}
+
+.hero-btn .subtitle {
+  font-family: 'Karla', sans-serif;
+  font-weight: 500;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.75;
+}
+
+.tea-card-mini {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 14px 16px;
+  border-radius: 18px;
+  border: 1px solid var(--border-medium);
+  cursor: pointer;
+  transition: border-color 0.15s;
+}
+
+.tea-card-mini:active {
+  opacity: 0.7;
+}
+
+.tea-card-mini .color-dot {
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  flex-shrink: 0;
+}
+
+.tea-card-mini .info {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tea-card-mini .info .name {
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-weight: 500;
+  font-size: 18px;
+  line-height: 1.2;
+  color: var(--text-primary);
+}
+
+.tea-card-mini .info .meta {
+  font-family: 'Karla', sans-serif;
+  font-weight: 400;
+  font-size: 13px;
+  color: var(--text-tertiary);
+}
+
+.tea-card-mini .count {
+  font-family: 'Karla', sans-serif;
+  font-weight: 500;
+  font-size: 13px;
+  color: var(--accent-amber);
+  white-space: nowrap;
+}
+
+.stats-banner {
+  padding: 16px 18px;
+  border-radius: 20px;
+  background: var(--bg-secondary);
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  cursor: pointer;
+}
+
+.stats-banner .text {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.stats-banner .text .title {
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-weight: 500;
+  font-size: 20px;
+  line-height: 1.1;
+  color: var(--text-primary);
+}
+
+.stats-banner .text .subtitle {
+  font-family: 'Karla', sans-serif;
+  font-weight: 400;
+  font-size: 13px;
+  color: var(--text-tertiary);
+}
+
+.stats-banner .arrow {
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-weight: 500;
+  font-size: 22px;
+  color: var(--accent-amber);
+}
+
+/* ============================================
+   Tea Detail Hero
+   ============================================ */
+.tea-hero {
+  height: 160px;
+  position: relative;
+  overflow: hidden;
+  display: flex;
+  align-items: flex-end;
+  padding: 22px 26px;
+  border-radius: 0 0 20px 20px;
+  margin: -24px -20px 0;
+  width: calc(100% + 40px);
+}
+
+.tea-hero .pattern {
+  position: absolute;
+  inset: 0;
+  opacity: 0.5;
+  background-image: repeating-linear-gradient(
+    35deg,
+    transparent,
+    transparent 4.5px,
+    var(--border-light) 4.5px,
+    var(--border-light) 9px
+  );
+}
+
+.tea-hero .label {
+  position: absolute;
+  left: 26px;
+  top: 22px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--text-tertiary);
+}
+
+.tea-hero .cn-name {
+  position: relative;
+  font-family: 'Cormorant Garamond', Georgia, serif;
+  font-weight: 500;
+  font-size: 48px;
+  line-height: 1;
+  color: var(--text-primary);
+  opacity: 0.9;
+}
+
+/* ============================================
+   Scenario Chips
+   ============================================ */
+.scenario-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.scenario-chip {
+  padding: 9px 0;
+  width: 52px;
+  text-align: center;
+  border-radius: 12px;
+  background: var(--bg-secondary);
+  font-family: 'Karla', sans-serif;
+  font-weight: 500;
+  font-size: 15px;
+  font-variant-numeric: tabular-nums;
+  color: var(--text-primary);
+}
+
+/* ============================================
+   Misc
+   ============================================ */
+.gap-8 { gap: 8px; }
+.gap-12 { gap: 12px; }
+.gap-16 { gap: 16px; }
+.gap-20 { gap: 20px; }
+.gap-24 { gap: 24px; }
+
+.mt-8 { margin-top: 8px; }
+.mt-12 { margin-top: 12px; }
+.mt-16 { margin-top: 16px; }
+.mt-20 { margin-top: 20px; }
+.mt-24 { margin-top: 24px; }
+
+.mb-8 { margin-bottom: 8px; }
+.mb-12 { margin-bottom: 12px; }
+.mb-16 { margin-bottom: 16px; }
+.mb-20 { margin-bottom: 20px; }
+.mb-24 { margin-bottom: 24px; }
+
+.flex { display: flex; }
+.flex-col { flex-direction: column; }
+.items-center { align-items: center; }
+.justify-between { justify-content: space-between; }
+.flex-1 { flex: 1; }
+
+.text-center { text-align: center; }
+
+.w-full { width: 100%; }
+
+.hidden { display: none !important; }
+
+/* Scrollbar styling */
+::-webkit-scrollbar {
+  width: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--border-strong);
+  border-radius: 99px;
+}
+
+/* Prevent text selection on UI elements */
+button, .nav-item, .chip, .list-row, .tea-card-mini {
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+/* Focus styles */
+button:focus-visible,
+input:focus-visible {
+  outline: 2px solid var(--accent-green);
+  outline-offset: 2px;
+}
+
+/* ============================================
+   Phase 2: Add Tea Form Styles
+   ============================================ */
+
+.form-container {
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding: 0;
+}
+
+.form-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.form-group label {
+  font-family: var(--font-sans);
+  font-size: 0.875rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+
+.form-group input[type="text"],
+.form-group input[type="number"],
+.form-group textarea,
+.form-group select {
+  padding: 0.75rem 1rem;
+  border: 1px solid var(--border-secondary);
+  border-radius: 0.5rem;
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  background-color: var(--bg-secondary);
+  color: var(--text-primary);
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.form-group input[type="text"]:focus,
+.form-group input[type="number"]:focus,
+.form-group textarea:focus,
+.form-group select:focus {
+  outline: none;
+  border-color: var(--accent-green);
+  box-shadow: 0 0 0 3px rgba(46, 107, 44, 0.1);
+}
+
+.form-group textarea {
+  resize: vertical;
+  min-height: 100px;
+  font-family: var(--font-sans);
+}
+
+.form-group input[type="range"] {
+  height: 0.5rem;
+  cursor: pointer;
+  accent-color: var(--accent-green);
+}
+
+.form-group input[type="checkbox"] {
+  width: 1.25rem;
+  height: 1.25rem;
+  cursor: pointer;
+  accent-color: var(--accent-green);
+}
+
+.btn-danger {
+  background-color: var(--accent-red);
+  color: var(--text-primary);
+  border: none;
+  font-family: var(--font-sans);
+  font-weight: 500;
+  cursor: pointer;
+  transition: opacity 0.2s;
+}
+
+.btn-danger:active {
+  opacity: 0.8;
+}
+
+/* Toast notifications */
+.toast {
+  position: fixed;
+  bottom: 2rem;
+  left: 50%;
+  transform: translateX(-50%);
+  background-color: var(--accent-green);
+  color: var(--text-primary);
+  padding: 1rem 1.5rem;
+  border-radius: 0.75rem;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  animation: slideUp 0.3s ease-out;
+  z-index: 1000;
+  font-family: var(--font-sans);
+  font-weight: 500;
+}
+
+@keyframes slideUp {
+  from {
+    opacity: 0;
+    transform: translateX(-50%) translateY(2rem);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+  }
+}
+
+/* Screen add-tea visibility */
+#screen-add-tea {
+  display: none;
+}
+
+#screen-add-tea.active {
+  display: block;
+}
+
+/* ============================================
+   Modal Styles
+   ============================================ */
+.modal {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: rgba(0, 0, 0, 0);
+  backdrop-filter: blur(0px);
+  display: none;
+  align-items: flex-end;
+  z-index: 1000;
+  opacity: 0;
+  transition: all 0.3s ease-out;
+}
+
+.modal.active {
+  display: flex;
+  opacity: 1;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(4px);
+}
+
+.modal-content {
+  background: var(--bg-primary);
+  width: 100%;
+  border-radius: 1.5rem 1.5rem 0 0;
+  max-height: 90vh;
+  overflow-y: auto;
+  animation: slideUp 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+@keyframes slideUp {
+  from {
+    transform: translateY(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+.modal-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: 1.5rem;
+  border-bottom: 1px solid var(--border-secondary);
+  position: sticky;
+  top: 0;
+  background: var(--bg-primary);
+  z-index: 10;
+}
+
+.modal-header h2 {
+  margin: 0;
+  font-size: 1.5rem;
+  color: var(--text-primary);
+}
+
+.modal-close {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  color: var(--text-secondary);
+}
+
+.modal-body {
+  padding: 1.5rem;
+}
+
+.categories-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 1rem;
+}
+
+.category-card {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  border: 2px solid var(--border-secondary);
+  border-radius: 1rem;
+  background: var(--bg-secondary);
+  cursor: pointer;
+  transition: all 0.2s ease;
+  text-align: left;
+}
+
+.category-card:active {
+  transform: scale(0.95);
+  border-color: var(--accent-primary);
+  background: var(--bg-primary);
+}
+
+.category-color {
+  width: 3rem;
+  height: 3rem;
+  border-radius: 0.75rem;
+  flex-shrink: 0;
+}
+
+.category-text {
+  flex: 1;
+}
+
+.category-name {
+  font-weight: 600;
+  color: var(--text-primary);
+  font-size: 0.95rem;
+}
+
+.category-cn {
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  margin-top: 0.2rem;
+}
+
+.btn-category-selector {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid var(--border-secondary);
+  border-radius: 0.5rem;
+  background: var(--bg-secondary);
+  color: var(--text-primary);
+  font-size: 1rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  cursor: pointer;
+  transition: all 0.2s ease;
+}
+
+.btn-category-selector:active {
+  border-color: var(--accent-primary);
+  background: var(--bg-primary);
+}
+
+/* ============================================
+   Loader / Splash Screen
+   ============================================ */
+.app-loader {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  background: #1F1A10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 9999;
+  transition: opacity 0.5s ease, visibility 0.5s ease;
+  opacity: 1;
+  visibility: visible;
+}
+
+.app-loader.hidden {
+  opacity: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+
+.loader-content {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.5rem;
+  text-align: center;
+}
+
+.loader-logo {
+  width: 120px;
+  height: 120px;
+  object-fit: contain;
+  opacity: 0.9;
+  animation: pulse-logo 2s ease-in-out infinite;
+}
+
+.loader-title {
+  font-family: 'Cormorant Garamond', serif;
+  font-size: 2.5rem;
+  font-weight: 600;
+  color: var(--text-primary);
+  letter-spacing: 0.5px;
+  margin: 0;
+}
+
+.loader-subtitle {
+  font-family: 'Karla', sans-serif;
+  font-size: 1rem;
+  color: var(--text-secondary);
+  margin: 0;
+  min-height: 1.5rem;
+  opacity: 0.8;
+}
+
+.loader-spinner {
+  width: 40px;
+  height: 40px;
+  border: 3px solid var(--accent-green);
+  border-top: 3px solid transparent;
+  border-radius: 50%;
+  animation: spin-loader 1s linear infinite;
+  opacity: 0.7;
+}
+
+@keyframes spin-loader {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes pulse-logo {
+  0%, 100% {
+    opacity: 0.9;
+    transform: scale(1);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1.05);
+  }
+}

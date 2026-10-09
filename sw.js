@@ -1,16 +1,20 @@
-const CACHE_NAME = 'teatimer-v2';
+// TeaTimer 1.2 — service worker (офлайн-режим)
+// Версия кэша совпадает с версией приложения: при её смене старый кэш удаляется.
+const CACHE_NAME = 'teatimer-v1.2.1';
 const SOUND_CACHE = 'teatimer-sounds-v1';
 
-// Relative paths: absolute "/..." paths 404 (and fail the *entire* install,
-// since cache.addAll is all-or-nothing) whenever the app is served from a
-// subpath instead of a domain root.
+// Относительные пути: абсолютные "/..." дают 404 (и ломают всю установку, ведь
+// cache.addAll — «всё или ничего»), если приложение лежит не в корне домена.
 const ASSETS = [
   './',
   './index.html',
   './styles.css',
   './app.js',
   './teas.json',
-  './manifest.json'
+  './manifest.json',
+  './assets/TeaTimer.png',
+  './assets/TeaTimer-l.png',
+  './assets/favicon.ico'
 ];
 
 const SOUNDS = [
@@ -23,10 +27,8 @@ self.addEventListener('install', (e) => {
   e.waitUntil(
     Promise.all([
       caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS)),
-      caches.open(SOUND_CACHE).then(cache => {
-        // Кешируем звуки отдельно чтобы они были доступны даже если основной кеш устареет
-        return Promise.allSettled(SOUNDS.map(sound => cache.add(sound)));
-      })
+      // Звуки кэшируем отдельно и «мягко»: их отсутствие не должно ломать установку
+      caches.open(SOUND_CACHE).then(cache => Promise.allSettled(SOUNDS.map(url => cache.add(url))))
     ])
   );
   self.skipWaiting();
@@ -35,36 +37,45 @@ self.addEventListener('install', (e) => {
 self.addEventListener('activate', (e) => {
   e.waitUntil(
     caches.keys().then(keys =>
-      Promise.all(
-        keys
-          .filter(k => k !== CACHE_NAME && k !== SOUND_CACHE)
-          .map(k => caches.delete(k))
-      )
+      Promise.all(keys.filter(k => k !== CACHE_NAME && k !== SOUND_CACHE).map(k => caches.delete(k)))
     )
   );
   self.clients.claim();
 });
 
 self.addEventListener('fetch', (e) => {
-  const url = e.request.url;
-  const isSound = SOUNDS.some(sound => url.includes(sound));
+  const req = e.request;
+  if (req.method !== 'GET' || !req.url.startsWith('http')) return;
+  const url = decodeURIComponent(req.url);
+  const isSound = SOUNDS.some(s => url.includes(s.slice(2)));
 
   e.respondWith(
-    caches.match(e.request).then(cached => {
+    caches.match(req, { ignoreSearch: req.mode === 'navigate' }).then(cached => {
       if (cached) return cached;
-      return fetch(e.request).then(res => {
-        // res.status is 0 for opaque cross-origin responses (e.g. the
-        // Google Fonts stylesheet/woff2, loaded without a `crossorigin`
-        // attribute) — cache those too, or fonts silently vanish offline.
-        const cacheable = res.status === 200 || res.type === 'opaque';
-        if (e.request.method === 'GET' && cacheable) {
+      return fetch(req).then(res => {
+        // status 0 — «непрозрачные» ответы (Google Fonts без crossorigin): тоже кэшируем,
+        // иначе шрифты пропадут офлайн.
+        if (res.status === 200 || res.type === 'opaque') {
           const clone = res.clone();
-          // Кешируем звуки в отдельный кеш
-          const cacheName = isSound ? SOUND_CACHE : CACHE_NAME;
-          caches.open(cacheName).then(cache => cache.put(e.request, clone));
+          caches.open(isSound ? SOUND_CACHE : CACHE_NAME).then(cache => cache.put(req, clone));
         }
         return res;
-      }).catch(() => cached);
+      }).catch(() => {
+        // Офлайн и в кэше нет: для страниц отдаём приложение, для остального — пустой ответ
+        if (req.mode === 'navigate') return caches.match('./index.html');
+        return new Response('', { status: 504, statusText: 'offline' });
+      });
+    })
+  );
+});
+
+// Тап по уведомлению «Пролив готов» — возвращаем пользователя в приложение
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+      for (const c of list) { if ('focus' in c) return c.focus(); }
+      return self.clients.openWindow('./');
     })
   );
 });

@@ -1,0 +1,81 @@
+const CACHE_NAME = 'teatimer-v8';
+const SOUND_CACHE = 'teatimer-sounds-v1';
+
+// Relative paths: absolute "/..." paths 404 (and fail the *entire* install,
+// since cache.addAll is all-or-nothing) whenever the app is served from a
+// subpath instead of a domain root.
+const ASSETS = [
+  './',
+  './index.html',
+  './styles.css',
+  './app.js',
+  './teas.json',
+  './manifest.json'
+];
+
+const SOUNDS = [
+  './assets/sounds/Гонг.wav',
+  './assets/sounds/Колокольчик.wav',
+  './assets/sounds/Мягкий звон.wav'
+];
+
+self.addEventListener('install', (e) => {
+  e.waitUntil(
+    Promise.all([
+      caches.open(CACHE_NAME).then(cache => cache.addAll(ASSETS)),
+      caches.open(SOUND_CACHE).then(cache => {
+        // Кешируем звуки отдельно чтобы они были доступны даже если основной кеш устареет
+        return Promise.allSettled(SOUNDS.map(sound => cache.add(sound)));
+      })
+    ])
+  );
+  self.skipWaiting();
+});
+
+self.addEventListener('activate', (e) => {
+  e.waitUntil(
+    caches.keys().then(keys =>
+      Promise.all(
+        keys
+          .filter(k => k !== CACHE_NAME && k !== SOUND_CACHE)
+          .map(k => caches.delete(k))
+      )
+    )
+  );
+  self.clients.claim();
+});
+
+self.addEventListener('fetch', (e) => {
+  const url = e.request.url;
+  const isSound = SOUNDS.some(sound => url.includes(sound));
+
+  e.respondWith(
+    caches.match(e.request).then(cached => {
+      if (cached) return cached;
+      return fetch(e.request).then(res => {
+        // res.status is 0 for opaque cross-origin responses (e.g. the
+        // Google Fonts stylesheet/woff2, loaded without a `crossorigin`
+        // attribute) — cache those too, or fonts silently vanish offline.
+        const cacheable = res.status === 200 || res.type === 'opaque';
+        if (e.request.method === 'GET' && cacheable) {
+          const clone = res.clone();
+          // Кешируем звуки в отдельный кеш
+          const cacheName = isSound ? SOUND_CACHE : CACHE_NAME;
+          caches.open(cacheName).then(cache => cache.put(e.request, clone));
+        }
+        return res;
+      }).catch(() => cached);
+    })
+  );
+});
+
+// Тап по уведомлению «Пролив готов» — возвращаем пользователя в приложение
+self.addEventListener('notificationclick', (e) => {
+  e.notification.close();
+  e.waitUntil(
+    self.clients.matchAll({ type: 'window', includeUncontrolled: true }).then(list => {
+      for (const c of list) { if ('focus' in c) return c.focus(); }
+      return self.clients.openWindow('./');
+    })
+  );
+});

@@ -1,11 +1,10 @@
 /* ============================================
-   TeaTimer 1.2 — логика приложения
+   TeaTimer — Application Logic (Fixed)
    ============================================ */
 
 // ============================================
 // Constants & Config
 // ============================================
-const APP_VERSION = '1.2';
 const DB_NAME = 'TeaTimerDB';
 const DB_VERSION = 1;
 // Fallback only — overwritten by teas.json's own strength_multiplier once it
@@ -58,19 +57,22 @@ class TeaDB {
       keep_screen_on: false,
       default_vessel_ml: 120,
       default_strength: 'medium',
-      language: 'ru',
-      repeat_alert: true,
-      reminder_sound: 'bell-sound',
-      bg_keepalive: true,
-      last_backup: null,
-      backup_snooze_until: null
+      language: 'ru'
     };
     try {
       const tx = this.db.transaction('settings', 'readonly');
       const store = tx.objectStore('settings');
+      const result = await Promise.all([
+        this._get(store, 'theme'),
+        this._get(store, 'sound_enabled'),
+        this._get(store, 'vibration_enabled'),
+        this._get(store, 'keep_screen_on'),
+        this._get(store, 'default_vessel_ml'),
+        this._get(store, 'default_strength'),
+        this._get(store, 'language')
+      ]);
       const keys = Object.keys(defaults);
-      const result = await Promise.all(keys.map(k => this._get(store, k)));
-      result.forEach((val, i) => { if (val !== undefined && val !== null) defaults[keys[i]] = val; });
+      result.forEach((val, i) => { if (val !== undefined) defaults[keys[i]] = val; });
     } catch (e) { console.warn('Settings read error', e); }
     return defaults;
   }
@@ -169,12 +171,6 @@ class TeaDB {
     return new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
   }
 
-  async deletePreset(id) {
-    const tx = this.db.transaction('presets', 'readwrite');
-    tx.objectStore('presets').delete(id);
-    return new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
-  }
-
   async getPresets() {
     const tx = this.db.transaction('presets', 'readonly');
     const store = tx.objectStore('presets');
@@ -216,6 +212,17 @@ function formatTime(totalSeconds) {
   return m + ':' + String(s).padStart(2, '0');
 }
 
+function formatDate(dateStr) {
+  const d = new Date(dateStr);
+  const options = { weekday: 'long', day: 'numeric', month: 'long' };
+  return d.toLocaleDateString('ru-RU', options);
+}
+
+function formatShortDate(dateStr) {
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+}
+
 function formatDuration(minutes) {
   if (minutes < 60) return minutes + ' мин';
   const h = Math.floor(minutes / 60);
@@ -232,6 +239,10 @@ function generateScenario(tea, strength, numInfusions) {
     times.push(base + tea.steep_increment_seconds * i);
   }
   return times;
+}
+
+function shiftScenario(times, delta) {
+  return times.map(t => Math.max(5, t + delta));
 }
 
 function calcGrams(tea, vesselMl) {
@@ -266,6 +277,7 @@ const state = {
   currentScenario: null,
   currentSession: null,
   timerInterval: null,
+  timerRemaining: 0,
   timerTotal: 0,
   timerRunning: false,
   timerTargetEnd: null, // timestamp when timer should finish
@@ -276,10 +288,7 @@ const state = {
   customScenarioName: '',
   favorites: [],
   sessions: [],
-  presets: [],
-  todayMood: null,
-  teaForm: null,
-  storagePersisted: false
+  historyFilter: 'all'
 };
 
 // ============================================
@@ -336,7 +345,6 @@ function _renderTop() {
   const screen = top.screen;
   const params = top.params || {};
   state.currentScreen = screen;
-  const _t = document.getElementById('app-toast'); if (_t) _t.remove();
 
   // Hide all screens
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
@@ -403,83 +411,6 @@ window.addEventListener('popstate', () => {
 // ============================================
 // Screen: Home
 // ============================================
-
-// ============================================
-// «Что заварить сегодня»
-// ============================================
-const MOODS = [
-  { id: 'energy',  label: 'Бодрость',     cats: { green: 10, white: 7, oolong_light: 9, red: 6, yellow: 6 }, tags: ['свежий', 'цветочный'], why: 'бодрит' },
-  { id: 'calm',    label: 'Спокойствие',  cats: { white: 10, yellow: 8, oolong_light: 7, puerh_shou: 8, heicha: 7 }, tags: ['мягкий', 'сладкий', 'нежный'], why: 'для спокойствия' },
-  { id: 'warm',    label: 'Согреться',    cats: { red: 10, oolong_dark: 9, puerh_shou: 9, heicha: 8 }, tags: ['пряный', 'плотный', 'сладкий'], why: 'согревает' },
-  { id: 'fresh',   label: 'Освежиться',   cats: { green: 10, white: 8, yellow: 7, oolong_light: 8, puerh_sheng: 5 }, tags: ['свежий', 'лёгкий', 'цветочный'], why: 'освежает' },
-  { id: 'evening', label: 'На вечер',     cats: { puerh_shou: 10, heicha: 10, white: 6 }, tags: ['мягкий', 'сладкий', 'землистый', 'выдержанный'], why: 'для вечера', allow: t => t.category !== 'white' || /выдержан|шоу мэй|гун мэй|лао бай/i.test((t.tags || []).join(' ') + ' ' + t.name_ru) }
-];
-function defaultMood() {
-  const h = new Date().getHours();
-  return h < 11 ? 'energy' : h < 16 ? 'fresh' : h < 20 ? 'warm' : 'evening';
-}
-function daySeed() {
-  const d = new Date(); return d.getFullYear() * 400 + d.getMonth() * 31 + d.getDate();
-}
-function hashStr(str) { let h = 0; for (let i = 0; i < str.length; i++) h = (h * 31 + str.charCodeAt(i)) | 0; return Math.abs(h); }
-
-function suggestTeas(moodId, n = 3) {
-  const mood = MOODS.find(m => m.id === moodId) || MOODS[0];
-  const now = Date.now();
-  const last = {};
-  (state.sessions || []).forEach(s => { const t = new Date(s.start_time).getTime(); if (!last[s.tea_id] || t > last[s.tea_id]) last[s.tea_id] = t; });
-  const favs = new Set(state.favorites || []);
-  const scored = TEAS.map(t => {
-    let sc = (mood.cats[t.category] || 0) * 10;
-    if (!sc || (mood.allow && !mood.allow(t))) return null;
-    const tg = (t.tags || []).map(x => x.toLowerCase());
-    mood.tags.forEach(x => { if (tg.some(y => y.includes(x))) sc += 6; });
-    if (favs.has(t.id)) sc += 8;
-    const r = RatingService.displayRating(t.id); if (r) sc += (r.value - 3) * 4;
-    const l = last[t.id];
-    let reason = mood.why;
-    if (!l) { sc += 5; reason = mood.why + ' · ещё не пробовали'; }
-    else {
-      const days = (now - l) / 864e5;
-      if (days < 2) sc -= 25; else if (days > 10) { sc += 6; reason = mood.why + ' · давно не пили'; }
-    }
-    if (favs.has(t.id) && l) reason = mood.why + ' · из избранного';
-    sc += (hashStr(t.id + daySeed() + mood.id) % 17);   // ежедневная «встряска»
-    return { t, sc, reason };
-  }).filter(Boolean).sort((a, b) => b.sc - a.sc);
-  // разнообразие: не больше двух чаёв одного вида
-  const out = [], per = {};
-  for (const x of scored) {
-    if ((per[x.t.category] || 0) >= 2) continue;
-    per[x.t.category] = (per[x.t.category] || 0) + 1;
-    out.push(x); if (out.length >= n) break;
-  }
-  return out;
-}
-function todayCardHtml() {
-  const mood = state.todayMood || defaultMood();
-  const picks = suggestTeas(mood);
-  return `
-    <div class="today-chips">
-      ${MOODS.map(m => `<button class="chip ${m.id === mood ? 'chip-active' : 'chip-inactive'}" onclick="setTodayMood('${m.id}')">${m.label}</button>`).join('')}
-    </div>
-    <div class="today-list">
-      ${picks.map(p => {
-        const cat = getCategory(p.t.category);
-        return `<div class="tea-card-mini" onclick="navigate('tea-detail', {teaId:'${p.t.id}'})">
-          <span class="gem" style="--c:${cat.accent}"></span>
-          <div class="info"><span class="name">${escapeHtml(p.t.name_ru)}</span>
-          <span class="meta">${escapeHtml(p.reason)} · ${cat.name_ru} · ${p.t.temperature_min}–${p.t.temperature_max}°C</span></div>
-          <span class="count">${p.t.max_infusions} пр.</span></div>`;
-      }).join('')}
-    </div>`;
-}
-function setTodayMood(id) {
-  state.todayMood = id;
-  const host = document.getElementById('today-card');
-  if (host) host.innerHTML = todayCardHtml();
-}
-
 function renderHome() {
   const container = document.getElementById('screen-home');
   if (!container) return;
@@ -543,17 +474,6 @@ function renderHome() {
         <svg class="hero-art" width="92" height="60" viewBox="0 0 130 84" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M58 24C52.5 18 63.5 12.5 58 5"/><path d="M76 26C70.5 20 81.5 14.5 76 7"/><path d="M62 44H110L106 57Q86 61 66 57Z"/><path d="M110 46.5L121 41.5"/><path d="M68 43H104"/><path d="M72 43Q86 32.5 100 43"/><rect x="6" y="59" width="118" height="10" rx="2.5"/><path d="M26 69H42V76.5H26Z"/><path d="M92 69H108V76.5H92Z"/><path d="M14 46H48L44 57Q31 60.5 18 57Z"/><path d="M16.5 42.5Q31 34.5 45.5 42.5"/><circle cx="31" cy="33" r="3"/></svg>
       </button>
 
-      ${backupDue() ? `
-      <div class="backup-banner mt-20">
-        <div><b>Сохраните копию данных</b><span>История и оценки хранятся только в этом браузере</span></div>
-        <div class="bb-actions"><button class="btn-primary sm" onclick="exportData()">Сохранить</button><button class="btn-secondary sm" onclick="snoozeBackup()">Позже</button></div>
-      </div>` : ''}
-
-      <div style="margin-top: 20px; display:flex;flex-direction:column;gap:12px;">
-        <span class="overline">Что заварить сегодня</span>
-        <div id="today-card" class="today-card">${todayCardHtml()}</div>
-      </div>
-
       <div style="margin-top: 20px; display:flex;flex-direction:column;gap:12px;">
         <span class="overline">Под рукой</span>
         <div style="display:flex;flex-direction:column;gap:8px;">
@@ -565,7 +485,7 @@ function renderHome() {
               <span class="gem" style="--c:${cat.accent}"></span>
               <div class="info">
                 <span class="name">${escapeHtml(tea.name_ru)}</span>
-                <span class="meta">${tea.name_cn ? escapeHtml(tea.name_cn) + ' · ' : ''}${cat.name_ru} · ${tea.temperature_min}–${tea.temperature_max}°C</span>
+                <span class="meta">${escapeHtml(tea.name_cn)} · ${cat.name_ru} · ${tea.temperature_min}–${tea.temperature_max}°C</span>
               </div>
               <span class="count">${infusions} пр.</span>
             </div>
@@ -600,162 +520,19 @@ function handleQuickBrew() {
 // ============================================
 // Screen: Catalog
 // ============================================
-// ============================================
-// Умный поиск: слитно/раздельно, ё/е, латиница ↔ кириллица, опечатки,
-// синонимы, теги и слова из описания
-// ============================================
-const _CYR2LAT = { а:'a',б:'b',в:'v',г:'g',д:'d',е:'e',ж:'zh',з:'z',и:'i',й:'i',к:'k',л:'l',м:'m',н:'n',о:'o',п:'p',р:'r',с:'s',т:'t',у:'u',ф:'f',х:'h',ц:'c',ч:'ch',ш:'sh',щ:'sh',ы:'i',э:'e',ю:'yu',я:'ya' };
-const _SEARCH_SYN = [
-  [/^(пуер|пуэр|пу|puer|puerh)$/, 'пуэр'], [/^(олонг|олун|улонг|улун|oolong|ulong|wulong)$/, 'улун'],
-  [/^(чорн|черн|black)\w*$/, 'красн'], [/^(зелен|green)\w*$/, 'зелен'], [/^(белы|бела|white)\w*$/, 'бел'],
-  [/^(жасмин|jasmine|моли)\w*$/, 'жасмин'], [/^(молочн|milk)\w*$/, 'молочн'], [/^(дикорос|дики)\w*$/, 'дик']
-];
-
-function sNorm(str) {
-  return String(str || '').toLowerCase().replace(/ё/g, 'е').replace(/[ьъ’'`´"«»]/g, '').replace(/й/g, 'и')
-    .replace(/(.)\1+/g, '$1').replace(/[^a-z0-9а-я㐀-鿿\s]/g, ' ').replace(/\s+/g, ' ').trim();
-}
-const sKey = str => sNorm(str).replace(/\s/g, '');
-function cyr2lat(k) {
-  return k.replace(/чж/g, 'zh').replace(/цз/g, 'z').replace(/[а-я]/g, c => _CYR2LAT[c] || c).replace(/(.)\1+/g, '$1');
-}
-function lat2cyr(k) {
-  return k.replace(/ong|ung/g, 'ун').replace(/ing/g, 'ин').replace(/ang/g, 'ан').replace(/eng/g, 'эн')
-    .replace(/zh/g, 'чж').replace(/ch/g, 'ч').replace(/sh/g, 'ш').replace(/yu/g, 'ю').replace(/ya/g, 'я').replace(/yi/g, 'и')
-    .replace(/[a-z]/g, c => ({a:'а',b:'б',c:'ц',d:'д',e:'е',f:'ф',g:'г',h:'х',i:'и',j:'ц',k:'к',l:'л',m:'м',n:'н',o:'о',p:'п',q:'ч',r:'р',s:'с',t:'т',u:'у',v:'в',w:'в',x:'с',y:'и',z:'з'}[c])).replace(/(.)\1+/g, '$1');
-}
-// «Фонетический» ключ: латиница к кириллице-упрощённой, чтобы «hong» ≈ «хун», «Bai» ≈ «бай»
-function sPhon(k) { return /[a-z]/.test(k) ? lat2cyr(k) : k; }
-
-// Минимальное расстояние от запроса до любой подстроки текста (опечатки)
-function approxSub(q, text, maxD) {
-  const m = q.length, n = text.length;
-  if (!m || !n) return 99;
-  let prev = new Array(n + 1).fill(0), cur = new Array(n + 1);
-  for (let i = 1; i <= m; i++) {
-    cur[0] = i;
-    for (let j = 1; j <= n; j++) {
-      const c = q[i - 1] === text[j - 1] ? 0 : 1;
-      cur[j] = Math.min(prev[j - 1] + c, prev[j] + 1, cur[j - 1] + 1);
-    }
-    [prev, cur] = [cur, prev];
-  }
-  let best = 99;
-  for (let j = 0; j <= n; j++) if (prev[j] < best) best = prev[j];
-  return best <= maxD ? best : 99;
-}
-
-function teaSearchIndex(tea) {
-  if (tea._si && tea._siSrc === tea.description_ru + '|' + tea.name_ru) return tea._si;
-  const cat = getCategory(tea.category) || {};
-  const names = [tea.name_ru, tea.name_en, tea.name_cn].concat(tea.aliases || []).filter(Boolean);
-  const nameKeys = [];
-  names.forEach(n => {
-    const k = sKey(n); if (!k) return;
-    nameKeys.push(k, sPhon(k), cyr2lat(k));
-    // отдельные слова названия тоже ищутся (Хун, Пао…)
-  });
-  const words = names.flatMap(n => sNorm(n).split(' ')).filter(w => w.length > 1);
-  const wordKeys = words.flatMap(w => [w, sPhon(w), cyr2lat(w)]);
-  const tagWords = (tea.tags || []).flatMap(t => sNorm(t).split(' ')).filter(w => w.length > 1);
-  const catWords = sNorm([cat.name_ru, cat.name_cn, cat.hint_ru, cat.name_en].filter(Boolean).join(' ')).split(' ').filter(w => w.length > 1);
-  const descWords = sNorm(tea.description_ru || '').split(' ').filter(w => w.length > 2);
-  const hasCn = /[㐀-鿿]/.test(names.join(''));
-  tea._si = { nameKeys: [...new Set(nameKeys)], wordKeys: [...new Set(wordKeys)], tagWords, catWords, descWords, cn: names.filter(n => /[㐀-鿿]/.test(n)).join(''), hasCn };
-  tea._siSrc = tea.description_ru + '|' + tea.name_ru;
-  return tea._si;
-}
-
-function stemOf(w) { return w.length >= 6 ? w.slice(0, w.length - 2) : (w.length === 5 ? w.slice(0, 4) : w); }
-
-// Оценка одного слова запроса по чаю: чем выше — тем лучше, 0 — не подошло
-function scoreToken(tok, si) {
-  let best = 0;
-  const forms = [...new Set([tok, sPhon(tok), cyr2lat(tok)])];
-  if (/[㐀-鿿]/.test(tok)) return si.cn.includes(tok) ? 95 : 0;
-  for (const f of forms) {
-    if (f.length < 2) continue;
-    for (const nk of si.wordKeys) {
-      if (nk === f) best = Math.max(best, 100);
-      else if (nk.startsWith(f)) best = Math.max(best, 88);
-      else if (f.length >= 3 && nk.includes(f)) best = Math.max(best, 70);
-    }
-    if (best >= 100) return best;
-    for (const nk of si.nameKeys) {
-      if (nk === f) best = Math.max(best, 100);
-      else if (nk.startsWith(f)) best = Math.max(best, 92);
-      else if (nk.includes(f)) best = Math.max(best, 78);
-    }
-  }
-  if (best) return best;
-  const st = stemOf(tok);
-  if (tok.length >= 3) {
-    if (si.tagWords.some(w => w.startsWith(st))) best = Math.max(best, 72);
-    if (si.catWords.some(w => w.startsWith(st))) best = Math.max(best, 86);
-    if (si.descWords.some(w => w.startsWith(st))) best = Math.max(best, 34);
-  }
-  if (best) return best;
-  // опечатки: допускаем 1 ошибку для 4–6 букв и 2 для длинных
-  const d = tok.length >= 7 ? 2 : (tok.length >= 4 ? 1 : 0);
-  if (d) {
-    for (const f of forms) {
-      for (const nk of si.nameKeys) {
-        const dist = approxSub(f, nk, d);
-        if (dist <= d) best = Math.max(best, 66 - dist * 8);
-      }
-    }
-    if (!best) {
-      for (const w of [...si.tagWords, ...si.catWords]) {
-        const dist = approxSub(tok, w.slice(0, tok.length + 1), d);
-        if (dist <= d) best = Math.max(best, 40 - dist * 6);
-      }
-    }
-  }
-  return best;
-}
-
-function teaSearchScore(tea, qNorm, qKey) {
-  const si = teaSearchIndex(tea);
-  let tokens = qNorm.split(' ').filter(Boolean);
-  _SEARCH_SYN.forEach(([re, to]) => { tokens = tokens.map(t => t.replace(re, to)); });
-  // 1) весь запрос как одно слово (слитное написание «дахунпао», «бай му дань»)
-  let whole = 0;
-  const forms = [...new Set([qKey, sPhon(qKey), cyr2lat(qKey)])];
-  if (qKey.length >= 3 && !/[㐀-鿿]/.test(qKey)) {
-    for (const f of forms) {
-      for (const nk of si.nameKeys) {
-        if (nk === f) whole = Math.max(whole, 130);
-        else if (nk.startsWith(f)) whole = Math.max(whole, 112);
-        else if (nk.includes(f)) whole = Math.max(whole, 95);
-        else {
-          const d = f.length >= 8 ? 2 : (f.length >= 5 ? 1 : 0);
-          if (d) { const dist = approxSub(f, nk, d); if (dist <= d) whole = Math.max(whole, 80 - dist * 10); }
-        }
-      }
-    }
-  }
-  // 2) по словам запроса: все должны найтись
-  let sum = 0, ok = tokens.length > 0;
-  for (const t of tokens) {
-    const sc = scoreToken(t, si);
-    if (!sc) { ok = false; break; }
-    sum += sc;
-  }
-  const byTok = ok ? sum / tokens.length + Math.min(10, tokens.length * 3) : 0;
-  return Math.max(whole, byTok);
-}
-
 function catalogFiltered() {
-  const qNorm = sNorm(state.searchQuery);
+  const q = state.searchQuery.toLowerCase().trim();
   let list = TEAS;
   if (state.activeCategory !== 'all') list = list.filter(t => t.category === state.activeCategory);
-  if (!qNorm) return list;
-  const qKey = qNorm.replace(/\s/g, '');
-  return list
-    .map(t => ({ t, sc: teaSearchScore(t, qNorm, qKey) }))
-    .filter(x => x.sc > 0)
-    .sort((a, b) => b.sc - a.sc)
-    .map(x => x.t);
+  if (q) {
+    list = list.filter(t =>
+      (t.name_ru && t.name_ru.toLowerCase().includes(q)) ||
+      (t.name_en && t.name_en.toLowerCase().includes(q)) ||
+      (t.name_cn && t.name_cn.includes(q)) ||
+      (t.tags && t.tags.some(tag => tag.toLowerCase().includes(q)))
+    );
+  }
+  return list;
 }
 
 function catalogListHtml() {
@@ -808,7 +585,7 @@ function renderCatalog() {
 
       <div class="search-box mb-16">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-        <input type="search" enterkeyhint="search" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Название, вкус, 汉字 — как удобно" value="${escapeHtml(state.searchQuery)}" oninput="onCatalogSearch(this.value)">
+        <input type="search" enterkeyhint="search" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="Поиск: рус, англ, 汉字" value="${escapeHtml(state.searchQuery)}" oninput="onCatalogSearch(this.value)">
       </div>
 
       <div id="catalog-chips" style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px;">
@@ -1026,12 +803,7 @@ function renderTeaDetail(teaId) {
       </div>
 
       <div style="padding-top:22px;display:flex;flex-direction:column;gap:6px;">
-        <div class="name-row">
-          <h1 class="font-display" style="font-weight:500;font-size:28px;line-height:1.1;color:var(--text-primary);">${escapeHtml(tea.name_ru)}</h1>
-          <button class="copy-btn" onclick="copyTeaName('${tea.id}', this)" aria-label="Скопировать название" title="Скопировать название">
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="12" height="12" rx="2.5"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></svg>
-          </button>
-        </div>
+        <h1 class="font-display" style="font-weight:500;font-size:28px;line-height:1.1;color:var(--text-primary);">${escapeHtml(tea.name_ru)}</h1>
         <span style="font-family:'Karla',sans-serif;font-weight:400;font-size:14px;line-height:1.3;color:var(--text-tertiary);">
           ${[tea.name_cn, tea.name_en, cat.name_ru].filter(Boolean).map(escapeHtml).join(' · ')}
         </span>
@@ -1078,26 +850,6 @@ function renderTeaDetail(teaId) {
   `;
 }
 
-async function copyTeaName(id, btn) {
-  const t = getTea(id); if (!t) return;
-  const text = t.name_ru;
-  let ok = false;
-  try { await navigator.clipboard.writeText(text); ok = true; } catch (e) {
-    try {
-      const ta = document.createElement('textarea'); ta.value = text; ta.style.cssText = 'position:fixed;opacity:0;top:0;left:0';
-      document.body.appendChild(ta); ta.select(); ok = document.execCommand('copy'); ta.remove();
-    } catch (e2) { ok = false; }
-  }
-  if (btn && ok) {
-    const old = btn.innerHTML;
-    btn.classList.add('done');
-    btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12.5l4.5 4.5L19 7.5"/></svg>';
-    setTimeout(() => { btn.classList.remove('done'); btn.innerHTML = old; }, 1400);
-  }
-  if (navigator.vibrate) navigator.vibrate(8);
-  showToast(ok ? 'Название скопировано' : 'Не удалось скопировать');
-}
-
 function teaRatingPanel(teaId) {
   const mine = RatingService.teaRating(teaId);
   const st = RatingService.sessionStats(teaId);
@@ -1142,17 +894,13 @@ function renderSessionSetup(teaId) {
   if (!tea) { navigate('catalog'); return; }
 
   state.currentTea = tea;
-  // Привычные граммы и посуда — из прошлого чаепития с этим чаем
-  const lastS = [...(state.sessions || [])].filter(x => x.tea_id === teaId && x.grams)
-    .sort((a, b) => new Date(b.start_time) - new Date(a.start_time))[0];
-  const prev = state.currentScenario && state.currentScenario.tea.id === teaId && state.currentScenario.gramsManual ? state.currentScenario : null;
-  const vesselMl = prev ? prev.vesselMl : (lastS && lastS.vessel_ml ? lastS.vessel_ml : state.settings.default_vessel_ml);
-  const grams = prev ? prev.grams : (lastS ? lastS.grams : calcGrams(tea, vesselMl));
+  const vesselMl = state.settings.default_vessel_ml;
+  const grams = calcGrams(tea, vesselMl);
 
   const strength = state.settings.default_strength || 'medium';
   const numInfusions = tea.max_infusions;
   const scenario = generateScenario(tea, strength, numInfusions);
-  state.currentScenario = { tea, strength, numInfusions, vesselMl, grams, gramsManual: !!(prev || lastS), times: scenario };
+  state.currentScenario = { tea, strength, numInfusions, vesselMl, grams, times: scenario };
 
   container.innerHTML = `
     <div class="screen-content">
@@ -1194,9 +942,24 @@ function renderSessionSetup(teaId) {
         </div>
       </div>
 
-      ${gmBlockHtml(tea)}
+      <div class="panel triple mt-20">
+        <span style="flex:1;display:flex;flex-direction:column;gap:3px;">
+          <span class="overline" style="margin-bottom:0;">Заварка</span>
+          <span class="font-display" style="font-weight:500;font-size:22px;color:var(--text-primary);">${grams} г</span>
+        </span>
+        <span style="width:1px;background:var(--border-medium);"></span>
+        <span style="flex:1;display:flex;flex-direction:column;gap:3px;">
+          <span class="overline" style="margin-bottom:0;">Посуда</span>
+          <span class="font-display" style="font-weight:500;font-size:22px;color:var(--text-primary);">${vesselMl} мл</span>
+        </span>
+        <span style="width:1px;background:var(--border-medium);"></span>
+        <span style="flex:1;display:flex;flex-direction:column;gap:3px;">
+          <span class="overline" style="margin-bottom:0;">Промывка</span>
+          <span class="font-display" style="font-weight:500;font-size:22px;color:var(--text-primary);">${tea.rinse_recommended ? 'да' : 'нет'}</span>
+        </span>
+      </div>
 
-      <button class="btn-secondary mt-20" style="width:100%;height:52px;" onclick="openCustomScenario()">
+      <button class="btn-secondary mt-20" style="width:100%;height:52px;" onclick="navigate('custom-scenario')">
         Настроить каждый пролив вручную
       </button>
 
@@ -1205,75 +968,6 @@ function renderSessionSetup(teaId) {
       </div>
     </div>
   `;
-}
-
-
-// ============================================
-// Граммы заварки и посуда: редактируются при заварке и в отчёте
-// ============================================
-function gmFmt(n) { return String(Math.round(n * 10) / 10).replace('.', ','); }
-function gmRatioText(grams, ml, tea) {
-  if (!grams || !ml) return 'укажите граммы и объём';
-  const r = grams / ml * 100;
-  const rec = tea ? tea.gaiwan_ratio_g_per_100ml : null;
-  return `${gmFmt(r)} г на 100 мл` + (rec ? ` · рекомендуем ${gmFmt(rec)}` : '');
-}
-function gmFieldHtml(kind, label, value, unit, step) {
-  return `
-    <div class="gm-field">
-      <span class="overline" style="margin-bottom:0;">${label}</span>
-      <span class="gm-in">
-        <button type="button" onclick="gmStep('${kind}', -${step})" aria-label="Меньше">−</button>
-        <input class="gm-${kind}" type="number" inputmode="decimal" step="${step}" min="0" value="${value}" onchange="gmSet('${kind}', this.value)">
-        <em>${unit}</em>
-        <button type="button" onclick="gmStep('${kind}', ${step})" aria-label="Больше">+</button>
-      </span>
-    </div>`;
-}
-function gmBlockHtml(tea) {
-  const sc = state.currentScenario;
-  return `
-    <div class="gm-block mt-20">
-      <div class="gm-grid">
-        ${gmFieldHtml('grams', 'Заварка', sc.grams, 'г', 0.5)}
-        ${gmFieldHtml('vessel', 'Посуда', sc.vesselMl, 'мл', 10)}
-      </div>
-      <div class="gm-foot"><span id="gm-ratio">${gmRatioText(sc.grams, sc.vesselMl, tea)}</span>
-        ${tea && tea.rinse_recommended ? '<b>нужна промывка</b>' : ''}</div>
-    </div>`;
-}
-function gmSet(kind, raw) {
-  const sc = state.currentScenario; if (!sc) return;
-  let v = parseFloat(String(raw).replace(',', '.'));
-  if (!isFinite(v) || v <= 0) v = kind === 'grams' ? sc.grams : sc.vesselMl;
-  if (kind === 'grams') { sc.grams = Math.min(100, Math.round(v * 10) / 10); sc.gramsManual = true; }
-  else {
-    sc.vesselMl = Math.min(1000, Math.max(20, Math.round(v)));
-    state.settings.default_vessel_ml = sc.vesselMl; db.setSetting('default_vessel_ml', sc.vesselMl);
-    if (!sc.gramsManual) sc.grams = calcGrams(sc.tea, sc.vesselMl);   // пока граммы не вводили руками — считаем по рекомендации
-  }
-  document.querySelectorAll('input.gm-grams').forEach(el => { if (document.activeElement !== el) el.value = sc.grams; });
-  document.querySelectorAll('input.gm-vessel').forEach(el => { if (document.activeElement !== el) el.value = sc.vesselMl; });
-  document.querySelectorAll('#gm-ratio').forEach(el => { el.textContent = gmRatioText(sc.grams, sc.vesselMl, sc.tea); });
-}
-function gmStep(kind, delta) {
-  const sc = state.currentScenario; if (!sc) return;
-  gmSet(kind, (kind === 'grams' ? sc.grams : sc.vesselMl) + delta);
-  if (navigator.vibrate) navigator.vibrate(5);
-}
-
-// Отчёт: поправить граммы и посуду уже после чаепития
-async function saveSessionGm(id, kind, raw) {
-  const s = state.sessions.find(x => x.id === id); if (!s) return;
-  let v = parseFloat(String(raw).replace(',', '.'));
-  const patch = {};
-  if (!isFinite(v) || v <= 0) patch[kind === 'grams' ? 'grams' : 'vessel_ml'] = null;
-  else if (kind === 'grams') patch.grams = Math.min(100, Math.round(v * 10) / 10);
-  else patch.vessel_ml = Math.min(1000, Math.max(20, Math.round(v)));
-  await saveSessionPatch(id, patch);
-  const el = document.getElementById('sg-ratio');
-  if (el) el.textContent = gmRatioText(s.grams, s.vessel_ml, getTea(s.tea_id));
-  refreshVisibleScreen();
 }
 
 function setStrength(s) {
@@ -1353,14 +1047,12 @@ function updateScenarioPreview() {
 
 function startSession() {
   if (!state.currentScenario) return;
-  requestNotificationPermission();
   const sc = state.currentScenario;
   state.currentSession = {
     id: generateId(),
     tea_id: sc.tea.id,
     tea_name_snapshot: sc.tea.name_ru,
     strength: sc.strength,
-    grams: sc.grams, vessel_ml: sc.vesselMl,
     start_time: new Date().toISOString(),
     end_time: null,
     infusion_log: sc.times.map((planned, idx) => ({
@@ -1381,73 +1073,49 @@ function startSession() {
 // ============================================
 // Screen: Custom Scenario
 // ============================================
-function openCustomScenario() {
-  const sc = state.currentScenario;
-  if (sc) { state.customScenarioTimes = [...sc.times]; state.customScenarioName = ''; }
-  navigate('custom-scenario');
-}
-
 function renderCustomScenario() {
   const container = document.getElementById('screen-custom-scenario');
   if (!container) return;
 
   const times = state.customScenarioTimes;
-  const sc = state.currentScenario;
-  const tea = sc && sc.tea;
-  const cat = tea ? getCategory(tea.category) : null;
   const maxSec = Math.max(...times, 90);
-  const canDelete = times.length > 1;
-  const presets = state.presets || [];
 
   container.innerHTML = `
-    <div class="screen-content cs">
-      <div class="cs-head">
+    <div class="screen-content">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
         <button class="btn-icon sm" onclick="goBack()" aria-label="Назад">←</button>
         <div>
-          <span class="overline" style="margin-bottom:0;">Свой сценарий</span>
-          <h1>Своя лестница</h1>
+          <span class="overline" style="margin-bottom:0;">Кастомный сценарий</span>
+          <h1 class="font-display" style="font-weight:500;font-size:30px;line-height:1.05;color:var(--text-primary);">Своя лестница</h1>
         </div>
       </div>
 
-      ${tea ? `<div class="cs-tea"><span class="gem" style="--c:${cat.accent}"></span><b>${escapeHtml(tea.name_ru)}</b><span>${tea.temperature_min}–${tea.temperature_max}°C</span></div>` : ''}
-
-      ${sc ? gmBlockHtml(tea) : ''}
-
-      <div class="cs-summary" id="cs-summary">${csSummaryHtml()}</div>
-
-      ${presets.length ? `
-      <span class="overline">Мои сценарии</span>
-      <div class="cs-presets">
-        ${presets.map(p => `
-          <span class="cs-preset"><button onclick="loadPreset('${p.id}')">${escapeHtml(p.name)}<em>${p.times.length} пр.</em></button><button class="x" onclick="deletePreset('${p.id}')" aria-label="Удалить сценарий">×</button></span>
-        `).join('')}
-      </div>` : ''}
-
-      <div class="cs-tools">
-        <button class="btn-secondary" onclick="resetCustomScenario()">↺ Как рекомендуем</button>
-        <div class="cs-shift"><span>Сдвиг</span><button onclick="shiftAll(-5)">−5</button><button onclick="shiftAll(5)">+5</button></div>
+      <div style="margin-top:20px;display:flex;gap:10px;align-items:center;">
+        <span style="font-family:'Karla',sans-serif;font-weight:400;font-size:15px;color:var(--text-secondary);flex:1;">Сдвинуть все проливы</span>
+        <button class="btn-secondary" style="width:44px;height:44px;border-radius:14px;padding:0;font-size:20px;" onclick="shiftAll(-5)">−5</button>
+        <button class="btn-secondary" style="width:44px;height:44px;border-radius:14px;padding:0;font-size:20px;" onclick="shiftAll(5)">+5</button>
       </div>
 
-      <div class="cs-rows" id="cs-rows">
-        ${times.map((sec, i) => `
-          <div class="scenario-row cs-row" data-i="${i}">
+      <div style="margin-top:18px;display:flex;flex-direction:column;gap:8px;">
+        ${times.map((sec, i) => {
+          const pct = Math.round((sec / maxSec) * 100);
+          return `
+          <div class="scenario-row">
             <span class="idx">${i + 1}</span>
-            <span class="bar-bg"><span class="bar-fill" style="width:${Math.round((sec / maxSec) * 100)}%"></span></span>
-            <button class="cs-step" onclick="stepCustomTime(${i}, -5)" aria-label="Минус 5 секунд">−</button>
-            <span class="cs-val"><input type="number" inputmode="numeric" class="sec" value="${sec}" min="5" max="999" onchange="updateCustomTime(${i}, this.value)"><i>с</i></span>
-            <button class="cs-step" onclick="stepCustomTime(${i}, 5)" aria-label="Плюс 5 секунд">+</button>
-            <button class="cs-del" ${canDelete ? '' : 'disabled'} onclick="removeCustomInfusion(${i})" aria-label="Удалить пролив ${i + 1}">
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h16M10 11v6M14 11v6M6 7l1 12a2 2 0 0 0 2 2h6a2 2 0 0 0 2-2l1-12M9 7V4h6v3"/></svg>
-            </button>
-          </div>`).join('')}
-        <button class="btn-secondary btn-dashed" style="height:52px;border-radius:16px;" onclick="addCustomInfusion()" ${times.length >= 20 ? 'disabled' : ''}>
+            <span class="bar-bg"><span class="bar-fill" style="width:${pct}%"></span></span>
+            <input type="number" class="sec" value="${sec}" min="1" max="999" onchange="updateCustomTime(${i}, this.value)">
+            <span class="unit">с</span>
+          </div>
+          `;
+        }).join('')}
+        <button class="btn-secondary btn-dashed" style="height:52px;border-radius:16px;" onclick="addCustomInfusion()">
           + Ещё пролив
         </button>
       </div>
 
-      <div class="cs-save">
+      <div style="margin-top:20px;display:flex;flex-direction:column;gap:10px;">
         <div class="search-box" style="height:54px;border-radius:16px;">
-          <input type="text" maxlength="40" placeholder="Название сценария: «Дань цун, вечер»" value="${escapeHtml(state.customScenarioName)}" oninput="state.customScenarioName=this.value">
+          <input type="text" placeholder="Имя пресета: «Дань цун, вечер»" value="${escapeHtml(state.customScenarioName)}" oninput="state.customScenarioName=this.value" style="color:var(--text-tertiary);">
         </div>
         <div style="display:flex;gap:12px;">
           <button class="btn-secondary" style="flex:1;height:56px;border-radius:20px;" onclick="savePreset()">Сохранить</button>
@@ -1458,127 +1126,45 @@ function renderCustomScenario() {
   `;
 }
 
-function csSummaryHtml() {
-  const t = state.customScenarioTimes;
-  const total = t.reduce((a, b) => a + b, 0);
-  return `<div><b>${t.length}</b><span>${plural(t.length, 'пролив', 'пролива', 'проливов')}</span></div>
-          <div><b>${formatTime(total)}</b><span>вся заварка</span></div>
-          <div><b>${formatTime(t[0] || 0)}→${formatTime(t[t.length - 1] || 0)}</b><span>первый → последний</span></div>`;
-}
-
-// Обновляем только полосы и итоги — поле не теряет фокус
-function csRefreshInPlace() {
-  const t = state.customScenarioTimes;
-  const maxSec = Math.max(...t, 90);
-  document.querySelectorAll('#cs-rows .cs-row').forEach((row, i) => {
-    const bar = row.querySelector('.bar-fill'); if (bar) bar.style.width = Math.round((t[i] / maxSec) * 100) + '%';
-    const inp = row.querySelector('input.sec'); if (inp && document.activeElement !== inp) inp.value = t[i];
-  });
-  const sum = document.getElementById('cs-summary'); if (sum) sum.innerHTML = csSummaryHtml();
-}
-
 function shiftAll(delta) {
   state.customScenarioTimes = state.customScenarioTimes.map(t => Math.max(5, t + delta));
-  csRefreshInPlace();
-}
-
-function stepCustomTime(idx, delta) {
-  state.customScenarioTimes[idx] = Math.max(5, Math.min(999, state.customScenarioTimes[idx] + delta));
-  if (navigator.vibrate) navigator.vibrate(5);
-  csRefreshInPlace();
+  renderCustomScenario();
 }
 
 function updateCustomTime(idx, val) {
   const v = parseInt(val) || 5;
-  state.customScenarioTimes[idx] = Math.max(5, Math.min(999, v));
-  csRefreshInPlace();
-  const inp = document.querySelector(`#cs-rows .cs-row[data-i="${idx}"] input.sec`);
-  if (inp) inp.value = state.customScenarioTimes[idx];
+  state.customScenarioTimes[idx] = Math.max(5, v);
+  renderCustomScenario();
 }
 
 function addCustomInfusion() {
-  const t = state.customScenarioTimes;
-  if (t.length >= 20) return;
-  const step = t.length > 1 ? Math.max(0, t[t.length - 1] - t[t.length - 2]) : 5;
-  t.push(Math.min(999, (t[t.length - 1] || 30) + (step || 5)));
-  renderCustomScenario();
-}
-
-let _lastRemoved = null;
-function removeCustomInfusion(idx) {
-  const t = state.customScenarioTimes;
-  if (t.length <= 1) return;
-  _lastRemoved = { idx, val: t[idx] };
-  t.splice(idx, 1);
-  renderCustomScenario();
-  showToast(`Пролив ${idx + 1} удалён`, 'Вернуть', () => {
-    if (!_lastRemoved) return;
-    state.customScenarioTimes.splice(_lastRemoved.idx, 0, _lastRemoved.val);
-    _lastRemoved = null;
-    renderCustomScenario();
-  });
-}
-
-function resetCustomScenario() {
-  const sc = state.currentScenario;
-  if (!sc) return;
-  state.customScenarioTimes = generateScenario(sc.tea, sc.strength === 'custom' ? 'medium' : sc.strength, sc.numInfusions || sc.tea.max_infusions);
-  renderCustomScenario();
-}
-
-// Небольшое всплывающее сообщение (с необязательным действием)
-let _toastTimer = null;
-function showToast(msg, actionLabel, action) {
-  const old = document.getElementById('app-toast'); if (old) old.remove();
-  clearTimeout(_toastTimer);
-  const el = document.createElement('div');
-  el.id = 'app-toast'; el.className = 'app-toast';
-  el.innerHTML = `<span>${escapeHtml(msg)}</span>${actionLabel ? `<button>${escapeHtml(actionLabel)}</button>` : ''}`;
-  if (actionLabel) el.querySelector('button').onclick = () => { el.remove(); action && action(); };
-  document.getElementById('app').appendChild(el);
-  _toastTimer = setTimeout(() => el.remove(), 4200);
-}
-
-async function loadPreset(id) {
-  const p = (state.presets || []).find(x => x.id === id);
-  if (!p) return;
-  state.customScenarioTimes = [...p.times];
-  state.customScenarioName = p.name;
-  renderCustomScenario();
-  showToast(`Загружен: ${p.name}`);
-}
-
-async function deletePreset(id) {
-  await db.deletePreset(id);
-  state.presets = await db.getPresets();
+  const last = state.customScenarioTimes[state.customScenarioTimes.length - 1] || 30;
+  state.customScenarioTimes.push(last + 5);
   renderCustomScenario();
 }
 
 async function savePreset() {
-  const name = (state.customScenarioName || '').trim();
-  if (!name) { showToast('Введите название сценария'); const i = document.querySelector('.cs-save input'); if (i) i.focus(); return; }
-  const existing = (state.presets || []).find(p => p.name.toLowerCase() === name.toLowerCase());
+  if (!state.customScenarioName.trim()) {
+    alert('Введите имя пресета');
+    return;
+  }
   await db.savePreset({
-    id: existing ? existing.id : generateId(),
-    name,
+    id: generateId(),
+    name: state.customScenarioName,
     times: [...state.customScenarioTimes],
     created_at: new Date().toISOString()
   });
-  state.presets = await db.getPresets();
-  renderCustomScenario();
-  showToast(existing ? 'Сценарий обновлён' : 'Сценарий сохранён');
+  alert('Пресет сохранён!');
 }
 
 function startCustomSession() {
   if (!state.currentTea) return;
-  requestNotificationPermission();
   const sc = state.currentScenario;
   state.currentSession = {
     id: generateId(),
     tea_id: sc.tea.id,
     tea_name_snapshot: sc.tea.name_ru,
     strength: 'custom',
-    grams: sc.grams, vessel_ml: sc.vesselMl,
     start_time: new Date().toISOString(),
     end_time: null,
     infusion_log: state.customScenarioTimes.map((planned, idx) => ({
@@ -1619,14 +1205,10 @@ function renderTimer() {
   const totalInfusions = log.length;
   const timeStr = new Date().getHours() + ':' + String(new Date().getMinutes()).padStart(2, '0');
 
-  // Цвет настоя зависит от крепости и номера пролива: светлее в начале и к концу, насыщеннее в середине
-  const intensity = brewIntensity(currentIdx, totalInfusions, session.strength);
-  const accent0 = cat.accent;
-  const accent = tintAccent(accent0, intensity);
+  // Цвета сорта
+  const accent = cat.accent;
   const deep = adjustColor(accent, -48);
   const lite = adjustColor(accent, 48);
-  const uiDeep = adjustColor(accent0, -48), uiLite = adjustColor(accent0, 48);
-  const strengthWord = intensity < 0.62 ? 'слабый настой' : intensity < 0.98 ? 'мягкий настой' : intensity < 1.12 ? 'насыщенный настой' : 'крепкий настой';
   const [ar, ag, ab] = hexToRgb(accent);
   const mid = hexToRgb(adjustColor(accent, -24));
   const onLiquid = contrastText(mid);
@@ -1660,13 +1242,12 @@ function renderTimer() {
   const chips = [
     tea && tea.name_cn ? `<span class="cn">${escapeHtml(tea.name_cn)}</span>` : '',
     `<span>${state.currentScenario?.grams || '5'} г · ${state.currentScenario?.vesselMl || '120'} мл</span>`,
-    `<span>${tea ? tea.temperature_max : 100}°C</span>`,
-    `<span class="liq">${strengthWord}</span>`
+    `<span>${tea ? tea.temperature_max : 100}°C</span>`
   ].join('');
 
   container.innerHTML = `
     <div class="timer-screen active" id="timer-overlay"
-         style="--acc:${accent};--acc-rgb:${ar}, ${ag}, ${ab};--acc-deep:${deep};--acc-lite:${lite};--ui-deep:${uiDeep};--ui-lite:${uiLite};--on-liquid:${onLiquid};">
+         style="--acc:${accent};--acc-rgb:${ar}, ${ag}, ${ab};--acc-deep:${deep};--acc-lite:${lite};--on-liquid:${onLiquid};">
       <div class="t-bg"></div>
 
       <div class="t-header">
@@ -1753,11 +1334,6 @@ function renderTimer() {
           <span class="t-name">${escapeHtml(session.tea_name_snapshot)}</span>
           <div class="t-meta">${chips}</div>
         </div>
-
-        <p class="t-tip"><b>На что смотреть</b>${escapeHtml(brewTip(tea, currentIdx, totalInfusions))}</p>
-        <div class="t-tags" aria-label="Вкус пролива">
-          ${TASTE_TAGS.map(tg => `<button class="t-tag ${(currentInfusion.tags || []).includes(tg) ? 'on' : ''}" onclick="toggleTasteTag('${tg}', this)">${tg}</button>`).join('')}
-        </div>
       </div>
 
       <div class="t-actions">
@@ -1771,53 +1347,6 @@ function renderTimer() {
   `;
 
   startTimer(planned);
-}
-
-
-// ============================================
-// Подсказки «на что смотреть» и теги вкуса
-// ============================================
-const TASTE_TAGS = ['сладкий', 'цветочный', 'фруктовый', 'медовый', 'древесный', 'минеральный', 'дымный', 'густой', 'свежий', 'терпкий', 'горчит', 'пресный'];
-const BREW_TIPS = {
-  white:        ['Вдохните аромат сухого листа и крышки: сено, мёд, цветы.', 'Настой светлеет и сладеет — ловите медовые ноты и мягкую текстуру.', 'Вкус стал прозрачнее. Нужно ли добавить 5–10 секунд?'],
-  green:        ['Аромат свежий и травяной. Листья должны раскрыться, но не вариться.', 'Сладость и бобовые ноты — признак хорошего пролива. Не передерживайте.', 'Вкус светлеет. Вода не выше 85 °C, чтобы не появилась горечь.'],
-  yellow:       ['Мягкий хлебный аромат. Следите за нежной сладостью без горечи.', 'Обратите внимание на гладкость и послевкусие.', 'Настой становится легче — самое время для спокойной беседы.'],
-  oolong_light: ['Вдохните цветочный аромат на крышке: орхидея, сирень, сливки.', 'Лист раскрывается — аромат и вкус на пике. Фиксируйте послевкусие.', 'Остаётся сладость и свежесть. Добавляйте секунды понемногу.'],
-  oolong_dark:  ['Аромат обжарки: карамель, орех, сухофрукты. Дайте чаю раскрыться.', 'Минеральность и «скала» чувствуются больше. Следите за густотой.', 'Обжиг отступает, вкус мягче — виден сам лист.'],
-  red:          ['Аромат мёда, сладкого картофеля, какао. Настой должен быть янтарным.', 'Вкус на пике: сладость, пряность, плотное тело.', 'Настой светлеет, остаётся мягкая сладость. Подходит для долгих проливов.'],
-  puerh_sheng:  ['Первые проливы короткие: ловите цветочные и травяные ноты, горчинка быстро уходит.', 'Следите за «хуэй гань» — сладким возвращением после горечи.', 'Сила держится долго: вкус переходит к мёду и сухофруктам.'],
-  puerh_shou:   ['Аромат земли, дерева, какао — без «прудового» запаха после промывки.', 'Настой густой и тёмный. Гладкая текстура — признак хорошего шу.', 'Вкус остаётся сладким и плотным: можно пить ещё много проливов.'],
-  heicha:       ['Аромат дерева, финика, старой бумаги. Промывка уже сделала своё дело.', 'Густота и мягкость — главное. Ловите сладкие ноты.', 'Хэй ча терпелив: настой остаётся плотным ещё долго.']
-};
-function brewTip(tea, idx, total) {
-  const arr = BREW_TIPS[tea ? tea.category : ''] || ['Вдохните аромат, посмотрите на цвет настоя и запомните вкус.'];
-  const stage = idx === 0 ? 0 : (idx >= total - 1 && total > 2 ? 2 : (idx / Math.max(1, total - 1) > 0.6 ? 2 : 1));
-  return arr[Math.min(stage, arr.length - 1)];
-}
-function toggleTasteTag(tag, btn) {
-  const sess = state.currentSession; if (!sess) return;
-  const inf = sess.infusion_log.find(i => i.poured_at === null && !i.skipped);
-  if (!inf) return;
-  inf.tags = inf.tags || [];
-  const k = inf.tags.indexOf(tag);
-  if (k >= 0) inf.tags.splice(k, 1); else inf.tags.push(tag);
-  if (btn) btn.classList.toggle('on', k < 0);
-  if (navigator.vibrate && state.settings.vibration_enabled) navigator.vibrate(8);
-  db.saveSession(sess);
-}
-
-// Насыщенность настоя 0.35..1.25: кривая по проливам × крепость
-function brewIntensity(idx, total, strength) {
-  const x = total > 1 ? idx / (total - 1) : 0.3;
-  const curve = x < 0.3 ? 0.8 + (x / 0.3) * 0.2 : 1 - ((x - 0.3) / 0.7) * 0.62;
-  const mul = { light: 0.84, medium: 1, strong: 1.18, custom: 1 }[strength] || 1;
-  return Math.max(0.35, Math.min(1.25, curve * mul));
-}
-function tintAccent(hex, I) {
-  const [r, g, b] = hexToRgb(hex);
-  const mix = (to, t) => '#' + [r, g, b].map((v, i) => Math.round(v + (to[i] - v) * t).toString(16).padStart(2, '0')).join('');
-  if (I < 1) return mix([248, 238, 208], Math.min(0.8, (1 - I) * 0.85));
-  return mix([46, 24, 8], Math.min(0.4, (I - 1) * 1.5));
 }
 
 // ---- Таймер: логика ----
@@ -1857,8 +1386,6 @@ function startTimer(seconds) {
   state.timerRunning = true;
 
   if (state.settings.keep_screen_on) requestWakeLock();
-  armAlarm();
-  startKeepAlive();
 
   updateTimerDisplay();
   // Интервал живёт и после конца — считает «перестой»
@@ -1877,8 +1404,6 @@ function stopTimerLoops() {
 
 function stopTimer() {
   stopTimerLoops();
-  disarmAlarm();
-  stopKeepAlive();
   state.timerRunning = false;
   releaseWakeLock();
 }
@@ -1971,105 +1496,7 @@ function updateTimerDisplay() {
   if (done && !state.timerNotified) {
     state.timerNotified = true;
     timerFinished();
-    startRepeatAlerts();
   }
-}
-
-
-// ============================================
-// Надёжные напоминания
-// ============================================
-// 1) «Будильник» живёт отдельно от экрана таймера — сработает, даже если вы ушли в историю
-// 2) пока заварка не слита — повторяем сигнал
-// 3) тихий звук в фоне не даёт браузеру усыпить вкладку (по желанию, в настройках)
-function armAlarm() {
-  disarmAlarm();
-  if (!state.timerTargetEnd) return;
-  const ms = Math.max(0, state.timerTargetEnd - Date.now()) + 40;
-  state.alarmTimeout = setTimeout(onAlarm, ms);
-}
-function disarmAlarm() {
-  if (state.alarmTimeout) { clearTimeout(state.alarmTimeout); state.alarmTimeout = null; }
-  stopRepeatAlerts();
-  hideReadyToast();
-}
-function onAlarm() {
-  if (!state.timerTargetEnd) return;
-  if (!state.timerNotified) { state.timerNotified = true; timerFinished(); }
-  startRepeatAlerts();
-  if (state.currentScreen !== 'timer') showReadyToast();
-}
-function startRepeatAlerts() {
-  stopRepeatAlerts();
-  if (!state.settings || !state.settings.repeat_alert) return;
-  let n = 0;
-  state.repeatAlertTimer = setInterval(() => {
-    if (!state.timerTargetEnd || ++n > 8) { stopRepeatAlerts(); return; }
-    if (state.settings.sound_enabled) playReminder();
-    if (state.settings.vibration_enabled && navigator.vibrate) navigator.vibrate([160, 90, 160]);
-    notifyBrewReady();
-  }, 30000);
-  if (!state._origTitle) state._origTitle = document.title;
-  document.title = '🍵 Пора сливать!';
-}
-function stopRepeatAlerts() {
-  if (state.repeatAlertTimer) { clearInterval(state.repeatAlertTimer); state.repeatAlertTimer = null; }
-  if (state._origTitle) { document.title = state._origTitle; state._origTitle = null; }
-}
-function showReadyToast() {
-  hideReadyToast();
-  const t = document.createElement('button');
-  t.id = 'ready-toast'; t.className = 'ready-toast';
-  t.innerHTML = '<span>🍵</span><b>Пролив готов</b><em>Вернуться к таймеру</em>';
-  t.onclick = () => { hideReadyToast(); navigate('timer'); };
-  document.getElementById('app').appendChild(t);
-}
-function hideReadyToast() { const t = document.getElementById('ready-toast'); if (t) t.remove(); }
-
-// Тихая петля (WAV с тишиной) + MediaSession: Android/iOS не замораживают страницу
-const SILENT_WAV = 'data:audio/wav;base64,UklGRiQAAABXQVZFZm10IBAAAAABAAEAESsAABErAAABAAgAZGF0YQAAAAA=';
-function startKeepAlive() {
-  if (!state.settings || !state.settings.bg_keepalive) return;
-  try {
-    if (!state.keepAliveAudio) {
-      const a = new Audio(SILENT_WAV);
-      a.loop = true; a.volume = 0.02; a.preload = 'auto';
-      state.keepAliveAudio = a;
-    }
-    state.keepAliveAudio.play().catch(() => {});
-    if ('mediaSession' in navigator && window.MediaMetadata) {
-      navigator.mediaSession.metadata = new MediaMetadata({
-        title: (state.currentSession && state.currentSession.tea_name_snapshot) || 'TeaTimer',
-        artist: state.timerCount || 'Заварка идёт',
-        album: 'TeaTimer'
-      });
-    }
-  } catch (e) { /* не критично */ }
-}
-function stopKeepAlive() {
-  try {
-    if (state.keepAliveAudio) state.keepAliveAudio.pause();
-    if ('mediaSession' in navigator) navigator.mediaSession.metadata = null;
-  } catch (e) { /* ignore */ }
-}
-
-async function testAlert() {
-  if (state.settings.sound_enabled) playGong();
-  if (state.settings.vibration_enabled && navigator.vibrate) navigator.vibrate([200, 100, 400]);
-  if ('Notification' in window && Notification.permission === 'default') await Notification.requestPermission();
-  if ('Notification' in window && Notification.permission === 'granted') {
-    try {
-      const reg = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : null;
-      const opts = { body: 'Так будет выглядеть напоминание о проливе', icon: 'assets/TeaTimer.png', tag: 'teatimer-test' };
-      if (reg && reg.showNotification) await reg.showNotification('TeaTimer 🍵', opts); else new Notification('TeaTimer 🍵', opts);
-    } catch (e) { console.warn(e); }
-  }
-  const el = document.getElementById('alert-state');
-  if (el) el.textContent = alertStateText();
-}
-function alertStateText() {
-  if (!('Notification' in window)) return 'уведомления не поддерживаются';
-  return { granted: 'уведомления разрешены', denied: 'уведомления запрещены в браузере', default: 'разрешение ещё не выдано' }[Notification.permission];
 }
 
 function timerFinished() {
@@ -2085,7 +1512,7 @@ function timerFinished() {
 async function notifyBrewReady() {
   try {
     if (!('Notification' in window) || Notification.permission !== 'granted') return;
-    if (!document.hidden && state.currentScreen === 'timer') return;
+    if (!document.hidden) return;
     const opts = {
       body: 'Пролив готов — сливайте чай',
       icon: 'assets/TeaTimer.png',
@@ -2102,33 +1529,10 @@ async function notifyBrewReady() {
 
 // Вернулись в приложение — сразу догоняем время и возвращаем wake lock
 document.addEventListener('visibilitychange', () => {
-  if (document.hidden || !state.timerTargetEnd) return;
-  if (state.currentScreen !== 'timer') { if (state.timerTargetEnd <= Date.now()) { onAlarm(); } return; }
+  if (document.hidden || state.currentScreen !== 'timer' || !state.timerTargetEnd) return;
   updateTimerDisplay();
   if (state.timerRunning && state.settings && state.settings.keep_screen_on && !state.wakeLock) requestWakeLock();
 });
-
-// Напоминание «слейте чай» — отдельный звук, не такой, как гонг окончания пролива
-function playReminder() {
-  const id = (state.settings && state.settings.reminder_sound) || 'bell-sound';
-  const audio = document.getElementById(id) || document.getElementById('bell-sound');
-  if (audio) { audio.currentTime = 0; audio.play().catch(() => {}); }
-}
-async function setReminderSound(id) {
-  state.settings.reminder_sound = id;
-  await db.setSetting('reminder_sound', id);
-  renderSettings();
-  playReminder();
-}
-
-// Конец всей церемонии (после последнего слива) — «Мягкий звон»
-function playCeremonyEnd() {
-  if (state.settings && state.settings.sound_enabled) {
-    const a = document.getElementById('soft-ring-sound');
-    if (a) { a.currentTime = 0; a.play().catch(() => {}); }
-  }
-  if (state.settings && state.settings.vibration_enabled && navigator.vibrate) navigator.vibrate([120, 80, 120, 80, 240]);
-}
 
 function playGong() {
   const audio = document.getElementById('gong-sound');
@@ -2197,7 +1601,6 @@ async function finishSession() {
     state.sessions = await db.getSessions();
   }
   state.currentSession = null;
-  if (sheetId) playCeremonyEnd();
   navigate('history');
   if (sheetId) setTimeout(() => openSessionSheet(sheetId, { justFinished: true }), 350);
 }
@@ -2383,33 +1786,6 @@ function setHistoryPeriod(p) {
 // ============================================
 // Screen: History
 // ============================================
-
-// «Вкусы и оценки»: любимые вкусовые теги, лучшие по оценке, расход заварки
-function tasteStatsHtml(sessions) {
-  const tagCount = {};
-  sessions.forEach(s => (s.infusion_log || []).forEach(i => (i.tags || []).forEach(t => { tagCount[t] = (tagCount[t] || 0) + 1; })));
-  const tags = Object.entries(tagCount).sort((a, b) => b[1] - a[1]).slice(0, 8);
-  const byTea = {};
-  sessions.filter(s => s.rating).forEach(s => {
-    const k = s.tea_id; (byTea[k] ||= { id: s.tea_id, name: s.tea_name_snapshot, sum: 0, n: 0 });
-    byTea[k].sum += s.rating; byTea[k].n++;
-  });
-  const best = Object.values(byTea).map(x => ({ ...x, avg: x.sum / x.n })).sort((a, b) => b.avg - a.avg || b.n - a.n).slice(0, 3);
-  const grams = sessions.reduce((a, s) => a + (+s.grams || 0), 0);
-  if (!tags.length && !best.length && !grams) return '';
-  return `
-  <section class="panel mt-16">
-    <span class="overline">Вкусы и оценки</span>
-    ${grams ? `<p class="ts-line"><b>${(Math.round(grams * 10) / 10).toString().replace('.', ',')} г</b> заварки за период</p>` : ''}
-    ${tags.length ? `<div class="ts-tags">${tags.map(([t, n]) => `<span>${escapeHtml(t)} <em>${n}</em></span>`).join('')}</div>` : ''}
-    ${best.length ? `<div class="ts-best">${best.map(b => `
-      <div class="toptea" onclick="navigate('tea-detail',{teaId:'${b.id}'})">
-        <span class="toptea-name">${escapeHtml(b.name)}</span>
-        <span class="ts-star">★ ${b.avg.toFixed(1)}</span>
-      </div>`).join('')}</div>` : ''}
-  </section>`;
-}
-
 function renderHistory() {
   const container = document.getElementById('screen-history');
   if (!container) return;
@@ -2537,8 +1913,6 @@ function renderHistory() {
         </div>` : ''}
       </section>` : ''}
 
-      ${tasteStatsHtml(sessions)}
-
       <div class="hist-groups">
         ${Object.entries(groups).map(([key, list]) => `
           <section>
@@ -2648,12 +2022,13 @@ function openSessionSheet(id, opts = {}) {
       }
       prev = at;
     }
-    return { i: i + 1, planned: inf.planned_seconds, actual, over, skipped: !!inf.skipped, tags: inf.tags || [] };
+    return { i: i + 1, planned: inf.planned_seconds, actual, over, skipped: !!inf.skipped };
   });
   const maxSec = Math.max(1, ...rows.map(r => Math.max(r.planned, r.actual || 0)));
   const totalActual = rows.reduce((a, r) => a + (r.actual || 0), 0);
   const totalOver = rows.reduce((a, r) => a + r.over, 0);
   const totalPlanned = rows.filter(r => r.actual).reduce((a, r) => a + r.planned, 0);
+  const strengthName = { light: 'лёгкая', medium: 'средняя', strong: 'крепкая' }[s.strength] || '—';
 
   const sheet = document.createElement('div');
   sheet.id = 'session-sheet';
@@ -2683,12 +2058,6 @@ function openSessionSheet(id, opts = {}) {
         <div class="${totalOver ? 'warn' : ''}"><b>${totalOver ? '+' + formatTime(totalOver) : '0:00'}</b><span>передержка</span></div>
       </div>
 
-      <div class="sheet-gm">
-        <label>Заварка <input type="number" inputmode="decimal" step="0.5" min="0" value="${s.grams || ''}" placeholder="—" onchange="saveSessionGm('${s.id}', 'grams', this.value)"><em>г</em></label>
-        <label>Посуда <input type="number" inputmode="numeric" step="10" min="0" value="${s.vessel_ml || ''}" placeholder="—" onchange="saveSessionGm('${s.id}', 'vessel', this.value)"><em>мл</em></label>
-        <span id="sg-ratio">${gmRatioText(s.grams, s.vessel_ml, t)}</span>
-      </div>
-
       <span class="overline">Проливы: время с передержкой</span>
       <div class="sheet-bars">
         ${rows.map(r => {
@@ -2707,12 +2076,6 @@ function openSessionSheet(id, opts = {}) {
           </div>`;
         }).join('')}
       </div>
-
-      ${rows.some(r => r.tags.length) ? `
-      <span class="overline">Вкус по проливам</span>
-      <div class="sheet-tastes">
-        ${rows.filter(r => r.tags.length).map(r => `<div><b>${r.i}</b>${r.tags.map(t => `<span>${escapeHtml(t)}</span>`).join('')}</div>`).join('')}
-      </div>` : ''}
       <div class="sheet-total">
         <span>Всего: <b>${formatTime(totalActual)}</b> <small>при плане ${formatTime(totalPlanned)}</small></span>
         <span class="${totalOver ? 'warn' : ''}">${totalOver ? 'передержка +' + formatTime(totalOver) : 'без передержки'}</span>
@@ -2768,41 +2131,6 @@ function renderSettings() {
           </div>
           <div class="settings-row">
             <div>
-              <span class="label">Повторять сигнал</span>
-              <span class="sublabel">каждые 30 с, пока не слили</span>
-            </div>
-            <div class="toggle ${s.repeat_alert ? 'on' : ''}" onclick="toggleSetting('repeat_alert')">
-              <span class="knob"></span>
-            </div>
-          </div>
-          <div class="settings-row" style="flex-direction:column;align-items:stretch;gap:10px;">
-            <div>
-              <span class="label">Звук напоминания</span>
-              <span class="sublabel">отличается от гонга окончания пролива</span>
-            </div>
-            <div class="segmented">
-              <button class="segment ${s.reminder_sound !== 'soft-ring-sound' ? 'active' : ''}" onclick="setReminderSound('bell-sound')">Колокольчик</button>
-              <button class="segment ${s.reminder_sound === 'soft-ring-sound' ? 'active' : ''}" onclick="setReminderSound('soft-ring-sound')">Мягкий звон</button>
-            </div>
-          </div>
-          <div class="settings-row">
-            <div>
-              <span class="label">Работать в фоне</span>
-              <span class="sublabel">тихая «петля» не даёт телефону усыпить таймер</span>
-            </div>
-            <div class="toggle ${s.bg_keepalive ? 'on' : ''}" onclick="toggleSetting('bg_keepalive')">
-              <span class="knob"></span>
-            </div>
-          </div>
-          <div class="settings-row" style="cursor:pointer;" onclick="testAlert()">
-            <div>
-              <span class="label">Проверить сигнал</span>
-              <span class="sublabel" id="alert-state">${alertStateText()}</span>
-            </div>
-            <span style="color:var(--text-tertiary);">▶</span>
-          </div>
-          <div class="settings-row">
-            <div>
               <span class="label">Не гасить экран</span>
               <span class="sublabel">на время сессии</span>
             </div>
@@ -2826,14 +2154,11 @@ function renderSettings() {
           <span class="overline" style="padding-bottom:8px;">Данные</span>
           <div class="panel flush">
           <div class="settings-row" style="cursor:pointer;" onclick="exportData()">
-            <div>
-              <span class="label">Сохранить копию</span>
-              <span class="sublabel">${s.last_backup ? 'последняя: ' + new Date(s.last_backup).toLocaleDateString('ru-RU') : 'ещё не сохраняли'} · ${state.storagePersisted ? 'защита от очистки включена' : 'файл JSON'}</span>
-            </div>
+            <span class="label">Экспорт в JSON</span>
             <span style="font-family:'Karla',sans-serif;font-weight:500;font-size:14px;color:var(--text-tertiary);">→</span>
           </div>
           <div class="settings-row" style="cursor:pointer;" onclick="importData()">
-            <span class="label">Восстановить из копии</span>
+            <span class="label">Импорт</span>
             <span style="font-family:'Karla',sans-serif;font-weight:500;font-size:14px;color:var(--text-tertiary);">→</span>
           </div>
           <div class="settings-row" style="cursor:pointer;" onclick="clearAllData()">
@@ -2845,7 +2170,7 @@ function renderSettings() {
 
       <div style="margin-top:40px;display:flex;flex-direction:column;gap:4px;">
         <span style="font-family:'Karla',sans-serif;font-weight:400;font-size:13px;line-height:1.4;color:var(--text-tertiary);">Всё хранится только на этом устройстве. Сервера нет.</span>
-        <span style="font-family:'Karla',sans-serif;font-weight:400;font-size:13px;line-height:1.4;color:var(--text-muted);">TeaTimer ${APP_VERSION} · база чаёв: ${TEAS.length} позиций</span>
+        <span style="font-family:'Karla',sans-serif;font-weight:400;font-size:13px;line-height:1.4;color:var(--text-muted);">TeaTimer 1.0 · база чаёв: ${TEAS.length} позиций</span>
       </div>
     </div>
   `;
@@ -2866,8 +2191,8 @@ async function setTheme(theme) {
   renderSettings();
 }
 
-async function buildBackup() {
-  return {
+async function exportData() {
+  const data = {
     sessions: await db.getSessions(),
     favorites: await db.getFavorites(),
     customTeas: await db.getCustomTeas(),
@@ -2876,51 +2201,15 @@ async function buildBackup() {
     device_id: RatingService.deviceId(),
     settings: state.settings,
     exportDate: new Date().toISOString(),
-    version: '1.1'
+    version: '1.0'
   };
-}
-
-// Поделиться файлом (на телефоне — в «Файлы», мессенджер, облако) или скачать
-async function exportData() {
-  const data = await buildBackup();
-  const name = `teatimer-backup-${new Date().toISOString().split('T')[0]}.json`;
-  const file = new File([JSON.stringify(data, null, 2)], name, { type: 'application/json' });
-  let done = false;
-  try {
-    if (navigator.canShare && navigator.canShare({ files: [file] })) {
-      await navigator.share({ files: [file], title: 'Копия TeaTimer' });
-      done = true;
-    }
-  } catch (e) { if (e && e.name === 'AbortError') return; }
-  if (!done) {
-    const url = URL.createObjectURL(file);
-    const a = document.createElement('a');
-    a.href = url; a.download = name; a.click();
-    setTimeout(() => URL.revokeObjectURL(url), 2000);
-  }
-  state.settings.last_backup = new Date().toISOString();
-  await db.setSetting('last_backup', state.settings.last_backup);
-  refreshVisibleScreen();
-}
-
-async function snoozeBackup() {
-  const until = new Date(Date.now() + 7 * 864e5).toISOString();
-  state.settings.backup_snooze_until = until;
-  await db.setSetting('backup_snooze_until', until);
-  renderHome();
-}
-function backupDue() {
-  const n = (state.sessions || []).length;
-  if (n < 3) return false;
-  const st = state.settings || {};
-  if (st.backup_snooze_until && new Date(st.backup_snooze_until) > new Date()) return false;
-  if (!st.last_backup) return true;
-  return Date.now() - new Date(st.last_backup).getTime() > 30 * 864e5;
-}
-async function requestPersistentStorage() {
-  try {
-    if (navigator.storage && navigator.storage.persist) state.storagePersisted = await navigator.storage.persist();
-  } catch (e) { /* ignore */ }
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `teatimer-backup-${new Date().toISOString().split('T')[0]}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
 }
 
 function importData() {
@@ -3049,12 +2338,10 @@ async function loadTeaData() {
 }
 
 async function loadAppData() {
-  requestPersistentStorage();
   state.settings = await db.getSettings();
   state.favorites = await db.getFavorites();
   state.teaRatings = await db.getTeaRatings();
   state.sessions = await db.getSessions();
-  try { state.presets = await db.getPresets(); } catch (e) { state.presets = []; }
   await mergeCustomTeas();
   applyTheme();
 }
@@ -3085,33 +2372,25 @@ function registerSW() {
 async function init() {
   buildAppShell();
   initPullToRefresh();
-  try {
-    await loadTeaData();
-    await db.init();
-    await loadAppData();
-  } catch (e) {
-    console.error('Init failed', e);
-    const sub = document.getElementById('loader-subtitle');
-    if (sub) sub.innerHTML = 'Не удалось открыть хранилище данных.<br>Закройте приватный режим или разрешите сайту хранить данные.<br><button class="btn-secondary" style="margin-top:14px;padding:10px 18px" onclick="location.reload()">Повторить</button>';
-    const sp = document.querySelector('.loader-spinner'); if (sp) sp.style.display = 'none';
-    return;
-  }
+  await loadTeaData();
+  await db.init();
+  await loadAppData();
   registerSW();
-
+  requestNotificationPermission();
+  
+  // Hide loader when app is ready
   const loader = document.getElementById('app-loader');
-  if (loader) loader.classList.add('hidden');
-
-  // Ярлыки из manifest: ?action=brew | catalog
-  const action = new URLSearchParams(location.search).get('action');
-  if (action === 'catalog') navigate('catalog');
-  else if (action === 'brew') { navigate('home'); handleQuickBrew(); }
-  else navigate('home');
+  if (loader) {
+    loader.classList.add('hidden');
+  }
+  
+  navigate('home');
 }
 
 // ============================================
-// Pull-to-refresh: потянуть вниз и держать 1 секунду
+// Pull-to-refresh: потянуть вниз и держать 2 секунды
 // ============================================
-const PTR = { HOLD_MS: 1000, THRESHOLD: 74, MAX: 104 };
+const PTR = { HOLD_MS: 2000, THRESHOLD: 74, MAX: 104 };
 
 function buildPtrIndicator() {
   if (document.getElementById('ptr')) return;
@@ -3201,7 +2480,6 @@ function initPullToRefresh() {
 
   app.addEventListener('touchstart', (e) => {
     if (busy || e.touches.length !== 1) return;
-    if (e.target.closest && e.target.closest('.slider-hit, input, textarea, .t-tags, .today-chips, .scenario-row, .sheet, .segmented')) { armed = false; return; }   // ползунки и поля — не «потяни для обновления»
     scroller = activeScroller();
     if (!scroller || scroller.scrollTop > 0) { armed = false; return; }
     armed = true; pulling = false; done = false;
@@ -3231,52 +2509,29 @@ function initPullToRefresh() {
   app.addEventListener('touchend', end, { passive: true });
   app.addEventListener('touchcancel', end, { passive: true });
 
+  window.__ptrSim = { pull(d) { dist = d; pulling = true; armed = true; raf = requestAnimationFrame(tick); }, get done() { return done; } };
 }
 
-// Обновление: данные + свежие файлы приложения.
-// Кэш не удаляем вслепую: сначала скачиваем новые файлы, и только если всё получилось — подменяем и перезагружаем.
-const APP_FILES = ['./', './index.html', './styles.css', './app.js', './teas.json', './manifest.json'];
+// Обновление: данные + проверка новой версии приложения
 async function refreshApp() {
   const t0 = Date.now();
   try { await loadAppData(); } catch (e) { console.warn(e); }
-  let updated = false, failed = false;
-  if (!navigator.onLine) {
-    failed = true;
-  } else if (!('caches' in window)) {
-    updated = true;                         // нет Cache API — просто перезагружаем страницу
-  } else {
-    try {
-      const get = async u => {
-        const ctl = new AbortController();
-        const tm = setTimeout(() => ctl.abort(), 8000);
-        try {
-          const r = await fetch(u, { cache: 'reload', signal: ctl.signal });
-          return r.ok && !r.redirected ? [u, r] : null;
-        } catch (e) { return null; } finally { clearTimeout(tm); }
-      };
-      const res = (await Promise.all(APP_FILES.map(get))).filter(Boolean);
-      const core = ['./app.js', './styles.css'].every(c => res.some(x => x[0] === c));
-      if (core) {
-        const keys = (await caches.keys()).filter(k => !k.includes('sounds'));
-        const name = keys.includes('teatimer-v' + APP_VERSION) ? 'teatimer-v' + APP_VERSION : (keys[keys.length - 1] || 'teatimer-v' + APP_VERSION);
-        const cache = await caches.open(name);
-        await Promise.all(res.map(([u, r]) => cache.put(u, r).catch(() => {})));
-        updated = true;
-      } else failed = true;
-      try {
-        const reg = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : null;
-        if (reg) await reg.update();
-      } catch (e) { /* не критично */ }
-    } catch (e) { console.warn('Refresh failed', e); failed = true; }
+  let online = navigator.onLine;
+  if (online) {
+    try { const r = await fetch('./sw.js?r=' + Date.now(), { cache: 'no-store' }); online = r.ok; } catch (e) { online = false; }
   }
-  await new Promise(r => setTimeout(r, Math.max(0, 600 - (Date.now() - t0))));
-  if (updated || (failed && navigator.onLine)) {
+  if (online) {
+    try {
+      const reg = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : null;
+      if (reg) await reg.update();
+      const keys = await caches.keys();
+      await Promise.all(keys.filter(k => !k.includes('sounds')).map(k => caches.delete(k)));
+    } catch (e) { console.warn(e); }
+    await new Promise(r => setTimeout(r, Math.max(0, 500 - (Date.now() - t0))));
     location.reload();
-    await new Promise(() => {});
+    await new Promise(() => {});          // дальше страница перезагрузится
   } else {
     _renderTop();
-    if (failed) showToast(navigator.onLine ? 'Не удалось обновить, попробуйте позже' : 'Нет сети — данные обновлены локально');
-    else showToast('Данные обновлены');
   }
 }
 

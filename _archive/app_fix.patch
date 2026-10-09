@@ -1,0 +1,23 @@
+--- a/app.js
++++ b/app.js
+@@ -1620,6 +1620,12 @@ function requestNotificationPermission() {
+ 
+ // ============================================
+ // Initialization
++// ============================================
++async function init() {
++  buildAppShell();
++  await loadTeaData();
++  await db.init();
++  await loadAppData();
++  registerSW();
++  requestNotificationPermission();
++  
++  // Hide loader when app is ready
++  const loader = document.getElementById('app-loader');
++  if (loader) {
++    loader.classList.add('hidden');
++  }
++  
++  navigate('home');
++}

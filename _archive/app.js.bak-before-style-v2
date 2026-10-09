@@ -1,0 +1,1713 @@
+/* ============================================
+   TeaTimer — Application Logic (Fixed)
+   ============================================ */
+
+// ============================================
+// Constants & Config
+// ============================================
+const DB_NAME = 'TeaTimerDB';
+const DB_VERSION = 1;
+// Fallback only — overwritten by teas.json's own strength_multiplier once it
+// loads, so the data file stays the single source of truth.
+let STRENGTH_MULTIPLIER = { light: 0.8, medium: 1.0, strong: 1.2 };
+
+let TEAS_DATA = null;
+let CATEGORIES = [];
+let TEAS = [];
+
+// ============================================
+// IndexedDB Wrapper
+// ============================================
+class TeaDB {
+  constructor() {
+    this.db = null;
+  }
+
+  async init() {
+    return new Promise((resolve, reject) => {
+      const req = indexedDB.open(DB_NAME, DB_VERSION);
+      req.onerror = () => reject(req.error);
+      req.onsuccess = () => { this.db = req.result; resolve(); };
+      req.onupgradeneeded = (e) => {
+        const db = e.target.result;
+        if (!db.objectStoreNames.contains('sessions')) {
+          db.createObjectStore('sessions', { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('settings')) {
+          db.createObjectStore('settings', { keyPath: 'key' });
+        }
+        if (!db.objectStoreNames.contains('favorites')) {
+          db.createObjectStore('favorites', { keyPath: 'teaId' });
+        }
+        if (!db.objectStoreNames.contains('customTeas')) {
+          db.createObjectStore('customTeas', { keyPath: 'id' });
+        }
+        if (!db.objectStoreNames.contains('presets')) {
+          db.createObjectStore('presets', { keyPath: 'id' });
+        }
+      };
+    });
+  }
+
+  async getSettings() {
+    const defaults = {
+      theme: 'system',
+      sound_enabled: true,
+      vibration_enabled: true,
+      keep_screen_on: false,
+      default_vessel_ml: 120,
+      default_strength: 'medium',
+      language: 'ru'
+    };
+    try {
+      const tx = this.db.transaction('settings', 'readonly');
+      const store = tx.objectStore('settings');
+      const result = await Promise.all([
+        this._get(store, 'theme'),
+        this._get(store, 'sound_enabled'),
+        this._get(store, 'vibration_enabled'),
+        this._get(store, 'keep_screen_on'),
+        this._get(store, 'default_vessel_ml'),
+        this._get(store, 'default_strength'),
+        this._get(store, 'language')
+      ]);
+      const keys = Object.keys(defaults);
+      result.forEach((val, i) => { if (val !== undefined) defaults[keys[i]] = val; });
+    } catch (e) { console.warn('Settings read error', e); }
+    return defaults;
+  }
+
+  async setSetting(key, value) {
+    const tx = this.db.transaction('settings', 'readwrite');
+    const store = tx.objectStore('settings');
+    store.put({ key, value });
+    return new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
+  }
+
+  async getSessions() {
+    const tx = this.db.transaction('sessions', 'readonly');
+    const store = tx.objectStore('sessions');
+    return new Promise((res, rej) => {
+      const req = store.getAll();
+      req.onsuccess = () => res(req.result || []);
+      req.onerror = rej;
+    });
+  }
+
+  async saveSession(session) {
+    const tx = this.db.transaction('sessions', 'readwrite');
+    const store = tx.objectStore('sessions');
+    store.put(session);
+    return new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
+  }
+
+  async deleteSession(id) {
+    const tx = this.db.transaction('sessions', 'readwrite');
+    const store = tx.objectStore('sessions');
+    store.delete(id);
+    return new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
+  }
+
+  async getFavorites() {
+    const tx = this.db.transaction('favorites', 'readonly');
+    const store = tx.objectStore('favorites');
+    return new Promise((res, rej) => {
+      const req = store.getAll();
+      req.onsuccess = () => res((req.result || []).map(r => r.teaId));
+      req.onerror = rej;
+    });
+  }
+
+  async toggleFavorite(teaId) {
+    const tx = this.db.transaction('favorites', 'readwrite');
+    const store = tx.objectStore('favorites');
+    const existing = await new Promise((res, rej) => {
+      const r = store.get(teaId);
+      r.onsuccess = () => res(r.result);
+      r.onerror = rej;
+    });
+    if (existing) store.delete(teaId);
+    else store.put({ teaId });
+    return new Promise((res, rej) => { tx.oncomplete = () => res(!existing); tx.onerror = rej; });
+  }
+
+  async getCustomTeas() {
+    const tx = this.db.transaction('customTeas', 'readonly');
+    const store = tx.objectStore('customTeas');
+    return new Promise((res, rej) => {
+      const req = store.getAll();
+      req.onsuccess = () => res(req.result || []);
+      req.onerror = rej;
+    });
+  }
+
+  async saveCustomTea(tea) {
+    const tx = this.db.transaction('customTeas', 'readwrite');
+    const store = tx.objectStore('customTeas');
+    store.put(tea);
+    return new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
+  }
+
+  async getPresets() {
+    const tx = this.db.transaction('presets', 'readonly');
+    const store = tx.objectStore('presets');
+    return new Promise((res, rej) => {
+      const req = store.getAll();
+      req.onsuccess = () => res(req.result || []);
+      req.onerror = rej;
+    });
+  }
+
+  async savePreset(preset) {
+    const tx = this.db.transaction('presets', 'readwrite');
+    const store = tx.objectStore('presets');
+    store.put(preset);
+    return new Promise((res, rej) => { tx.oncomplete = res; tx.onerror = rej; });
+  }
+
+  _get(store, key) {
+    return new Promise((res, rej) => {
+      const r = store.get(key);
+      r.onsuccess = () => res(r.result?.value);
+      r.onerror = rej;
+    });
+  }
+}
+
+const db = new TeaDB();
+
+// ============================================
+// Utilities
+// ============================================
+function generateId() {
+  return Date.now().toString(36) + Math.random().toString(36).substr(2, 5);
+}
+
+function formatTime(totalSeconds) {
+  const m = Math.floor(totalSeconds / 60);
+  const s = totalSeconds % 60;
+  return m + ':' + String(s).padStart(2, '0');
+}
+
+function formatDate(dateStr) {
+  const d = new Date(dateStr);
+  const options = { weekday: 'long', day: 'numeric', month: 'long' };
+  return d.toLocaleDateString('ru-RU', options);
+}
+
+function formatShortDate(dateStr) {
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+}
+
+function formatDuration(minutes) {
+  if (minutes < 60) return minutes + ' мин';
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  return h + ' ч ' + (m > 0 ? m + ' мин' : '');
+}
+
+function generateScenario(tea, strength, numInfusions) {
+  const mult = STRENGTH_MULTIPLIER[strength] || 1.0;
+  const base = Math.round(tea.first_steep_seconds * mult);
+  const times = [];
+  const max = Math.min(numInfusions, tea.max_infusions);
+  for (let i = 0; i < max; i++) {
+    times.push(base + tea.steep_increment_seconds * i);
+  }
+  return times;
+}
+
+function shiftScenario(times, delta) {
+  return times.map(t => Math.max(5, t + delta));
+}
+
+function calcGrams(tea, vesselMl) {
+  return Math.round(tea.gaiwan_ratio_g_per_100ml * vesselMl / 100 * 10) / 10;
+}
+
+function getCategory(id) {
+  return CATEGORIES.find(c => c.id === id) || CATEGORIES[0];
+}
+
+function getTea(id) {
+  return TEAS.find(t => t.id === id);
+}
+
+function escapeHtml(str) {
+  if (str == null) return '';
+  const div = document.createElement('div');
+  div.textContent = str;
+  return div.innerHTML;
+}
+
+// ============================================
+// App State
+// ============================================
+const state = {
+  currentScreen: 'home',
+  navStack: [],
+  settings: null,
+  currentTea: null,
+  currentScenario: null,
+  currentSession: null,
+  timerInterval: null,
+  timerRemaining: 0,
+  timerTotal: 0,
+  timerRunning: false,
+  timerTargetEnd: null, // timestamp when timer should finish
+  wakeLock: null,
+  searchQuery: '',
+  activeCategory: 'all',
+  customScenarioTimes: [],
+  customScenarioName: '',
+  favorites: [],
+  sessions: [],
+  historyFilter: 'all'
+};
+
+// ============================================
+// Theme Management
+// ============================================
+function applyTheme() {
+  const theme = state.settings?.theme || 'system';
+  const root = document.documentElement;
+  if (theme === 'light') root.setAttribute('data-theme', 'light');
+  else if (theme === 'dark') root.setAttribute('data-theme', 'dark');
+  else root.removeAttribute('data-theme');
+}
+
+// ============================================
+// Navigation
+// ============================================
+// Root screens fully reset the stack (they're reached via bottom-nav tabs,
+// not drill-down). Everything else pushes on top, and both the in-app "←"
+// buttons and the hardware/gesture back button pop it one level at a time
+// via the real browser History API — a single "prevScreen" slot can't do
+// that correctly past two levels deep (e.g. tea → session → custom would
+// bounce back and forth between the last two screens instead of unwinding).
+const ROOT_SCREENS = ['home', 'catalog', 'history', 'settings'];
+
+function navigate(screen, params = {}) {
+  _leaveScreen(screen);
+
+  if (ROOT_SCREENS.includes(screen)) {
+    state.navStack = [{ screen, params }];
+  } else {
+    const top = state.navStack[state.navStack.length - 1];
+    if (top && top.screen === screen) {
+      state.navStack[state.navStack.length - 1] = { screen, params };
+    } else {
+      state.navStack.push({ screen, params });
+    }
+  }
+
+  history.pushState({ depth: state.navStack.length }, '', location.pathname + location.search);
+  _renderTop();
+}
+
+function _leaveScreen(nextScreen) {
+  // Pause timer when leaving timer screen (keeps timerTargetEnd for resume)
+  if (state.currentScreen === 'timer' && nextScreen !== 'timer') {
+    stopTimerLoops();
+    state.timerRunning = false;
+    releaseWakeLock();
+  }
+}
+
+function _renderTop() {
+  const top = state.navStack[state.navStack.length - 1] || { screen: 'home', params: {} };
+  const screen = top.screen;
+  const params = top.params || {};
+  state.currentScreen = screen;
+
+  // Hide all screens
+  document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+  document.querySelectorAll('.timer-screen').forEach(s => s.classList.remove('active'));
+
+  // Show target screen
+  const target = document.getElementById('screen-' + screen);
+  if (target) target.classList.add('active');
+
+  // Update nav
+  updateBottomNav(screen);
+
+  // Render screen content
+  if (screen === 'home') renderHome();
+  else if (screen === 'catalog') renderCatalog();
+  else if (screen === 'tea-detail') renderTeaDetail(params.teaId);
+  else if (screen === 'session-setup') renderSessionSetup(params.teaId);
+  else if (screen === 'custom-scenario') renderCustomScenario();
+  else if (screen === 'timer') renderTimer();
+  else if (screen === 'history') renderHistory();
+  else if (screen === 'settings') renderSettings();
+
+  window.scrollTo(0, 0);
+}
+
+function updateBottomNav(screen) {
+  const navMap = { home: 0, catalog: 1, history: 2, settings: 3 };
+  const idx = navMap[screen];
+  document.querySelectorAll('.nav-item').forEach((item, i) => {
+    item.classList.toggle('active', i === idx);
+  });
+  const nav = document.querySelector('.bottom-nav');
+  if (nav) nav.style.display = (screen === 'timer' || screen === 'session-setup' || screen === 'custom-scenario' || screen === 'tea-detail') ? 'none' : 'flex';
+}
+
+// UI "←" buttons: consume one real history entry so they stay in lockstep
+// with the hardware/gesture back button below.
+function goBack() {
+  if (state.navStack.length > 1) {
+    history.back();
+  } else {
+    navigate('home');
+  }
+}
+
+// Hardware/gesture back button (Android, browser back): pop our stack in
+// lockstep with the browser's own session history instead of re-deriving
+// "where we came from" ourselves.
+window.addEventListener('popstate', () => {
+  const willPop = state.navStack.length > 1;
+  const nextScreen = willPop
+    ? state.navStack[state.navStack.length - 2].screen
+    : (state.navStack[0] ? state.navStack[0].screen : 'home');
+  // Same cleanup as navigate(): a hardware/gesture back press while the
+  // brew timer is running is the one way to leave the timer screen without
+  // going through pourTea()/skipInfusion()/finishSession(), so it needs the
+  // same "stop the interval, release the wake lock" treatment or the timer
+  // keeps ticking invisibly against a screen nobody can see anymore.
+  _leaveScreen(nextScreen);
+  if (willPop) state.navStack.pop();
+  _renderTop();
+});
+
+// ============================================
+// Screen: Home
+// ============================================
+function renderHome() {
+  const container = document.getElementById('screen-home');
+  if (!container) return;
+
+  const now = new Date();
+  const dateStr = now.toLocaleDateString('ru-RU', { weekday: 'long', day: 'numeric', month: 'long' });
+
+  // FIX: copy array before sorting to avoid mutating state
+  const sortedSessions = state.sessions && state.sessions.length > 0
+    ? [...state.sessions].sort((a, b) => new Date(b.start_time) - new Date(a.start_time))
+    : [];
+
+  const lastSession = sortedSessions.length > 0 ? sortedSessions[0] : null;
+  const lastTea = lastSession ? getTea(lastSession.tea_id) : null;
+  const quickBrewSubtitle = lastTea
+    ? `последний: ${lastTea.name_ru}, ${lastSession.strength === 'light' ? 'лёгкая' : lastSession.strength === 'strong' ? 'крепкая' : 'средняя'}, ${lastSession.infusion_log?.length || 0} пр.`
+    : 'выберите чай из каталога';
+
+  // Get teas for "At Hand" — favorites + recently used
+  const favIds = new Set(state.favorites || []);
+  const recentIds = sortedSessions.slice(0, 10).map(s => s.tea_id);
+
+  let handIds = [...favIds];
+  for (const id of recentIds) {
+    if (!handIds.includes(id)) handIds.push(id);
+  }
+  handIds = handIds.slice(0, 4);
+
+  const handTeas = handIds.map(id => getTea(id)).filter(Boolean);
+  for (let i = 0; handTeas.length < 4 && i < TEAS.length; i++) {
+    const t = TEAS[i];
+    if (t && !handTeas.includes(t)) handTeas.push(t);
+  }
+
+  // Weekly stats
+  const weekAgo = new Date(); weekAgo.setDate(weekAgo.getDate() - 7);
+  const weekSessions = state.sessions ? state.sessions.filter(s => new Date(s.start_time) > weekAgo) : [];
+  const weekCount = weekSessions.length;
+  const weekMinutes = weekSessions.reduce((sum, s) => {
+    const start = new Date(s.start_time);
+    const end = s.end_time ? new Date(s.end_time) : new Date(start.getTime() + 30*60000);
+    return sum + Math.round((end - start) / 60000);
+  }, 0);
+
+  const teaCounts = {};
+  weekSessions.forEach(s => { teaCounts[s.tea_name_snapshot] = (teaCounts[s.tea_name_snapshot] || 0) + 1; });
+  const topTea = Object.entries(teaCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || '—';
+
+  container.innerHTML = `
+    <div class="screen-content">
+      <div style="margin-bottom: 20px;">
+        <span class="overline">${dateStr}</span>
+        <h1 class="font-display" style="font-weight:500;font-size:36px;line-height:1.05;letter-spacing:-0.02em;color:var(--text-primary);">Что заварим?</h1>
+      </div>
+
+      <button class="hero-btn" onclick="handleQuickBrew()">
+        <span class="title">Заварить</span>
+        <span class="subtitle">${escapeHtml(quickBrewSubtitle)}</span>
+      </button>
+
+      <div style="margin-top: 20px; display:flex;flex-direction:column;gap:12px;">
+        <span class="overline">Под рукой</span>
+        <div style="display:flex;flex-direction:column;gap:8px;">
+          ${handTeas.map(tea => {
+            const cat = getCategory(tea.category);
+            const infusions = tea.max_infusions;
+            return `
+            <div class="tea-card-mini" onclick="navigate('tea-detail', {teaId:'${tea.id}'})">
+              <span class="color-dot" style="background:${cat.accent};"></span>
+              <div class="info">
+                <span class="name">${escapeHtml(tea.name_ru)}</span>
+                <span class="meta">${escapeHtml(tea.name_cn)} · ${cat.name_ru} · ${tea.temperature_min}–${tea.temperature_max}°C</span>
+              </div>
+              <span class="count">${infusions} пр.</span>
+            </div>
+            `;
+          }).join('')}
+        </div>
+      </div>
+
+      ${weekCount > 0 ? `
+      <div class="stats-banner mt-20" onclick="navigate('history')">
+        <div class="text">
+          <span class="title">За неделю — ${weekCount} чаепитий</span>
+          <span class="subtitle">${formatDuration(weekMinutes)} · чаще всего ${escapeHtml(topTea)}</span>
+        </div>
+        <span class="arrow">→</span>
+      </div>
+      ` : ''}
+    </div>
+  `;
+}
+
+function handleQuickBrew() {
+  const sortedSessions = state.sessions ? [...state.sessions].sort((a, b) => new Date(b.start_time) - new Date(a.start_time)) : [];
+  const lastSession = sortedSessions.length > 0 ? sortedSessions[0] : null;
+  if (lastSession) {
+    navigate('session-setup', { teaId: lastSession.tea_id });
+  } else {
+    navigate('catalog');
+  }
+}
+
+// ============================================
+// Screen: Catalog
+// ============================================
+function renderCatalog() {
+  const container = document.getElementById('screen-catalog');
+  if (!container) return;
+
+  const q = state.searchQuery.toLowerCase().trim();
+  const catFilter = state.activeCategory;
+
+  let filtered = TEAS;
+  if (catFilter !== 'all') {
+    filtered = filtered.filter(t => t.category === catFilter);
+  }
+  if (q) {
+    filtered = filtered.filter(t =>
+      (t.name_ru && t.name_ru.toLowerCase().includes(q)) ||
+      (t.name_en && t.name_en.toLowerCase().includes(q)) ||
+      (t.name_cn && t.name_cn.includes(q)) ||
+      (t.tags && t.tags.some(tag => tag.toLowerCase().includes(q)))
+    );
+  }
+
+  container.innerHTML = `
+    <div class="screen-content">
+      <div style="margin-bottom: 16px;">
+        <h1 class="font-display" style="font-weight:500;font-size:32px;line-height:1.05;color:var(--text-primary);">Каталог</h1>
+      </div>
+
+      <div class="search-box mb-16">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--text-muted)" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+        <input type="text" placeholder="Поиск: рус, англ, 汉字" value="${escapeHtml(state.searchQuery)}" oninput="state.searchQuery=this.value; renderCatalog();">
+      </div>
+
+      <div style="display:flex;flex-wrap:wrap;gap:8px;margin-bottom:18px;">
+        <span class="chip ${catFilter === 'all' ? 'chip-active' : 'chip-inactive'}" onclick="state.activeCategory='all'; renderCatalog();">Все ${TEAS.length}</span>
+        ${CATEGORIES.map(c => `
+          <span class="chip ${catFilter === c.id ? 'chip-active' : 'chip-inactive'}" onclick="state.activeCategory='${c.id}'; renderCatalog();">${escapeHtml(c.name_ru)}</span>
+        `).join('')}
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:2px;">
+        ${filtered.map(tea => {
+          const cat = getCategory(tea.category);
+          return `
+          <div class="list-row" onclick="navigate('tea-detail', {teaId:'${tea.id}'})">
+            <span class="accent-bar" style="background:${cat.accent};"></span>
+            <div class="row-content">
+              <span class="row-title">${escapeHtml(tea.name_ru)}</span>
+              <span class="row-meta">${escapeHtml(tea.name_cn)} · ${cat.name_ru} · ${tea.temperature_min}–${tea.temperature_max}°C</span>
+            </div>
+            <span class="row-badge">${tea.max_infusions} пр.</span>
+          </div>
+          `;
+        }).join('')}
+        ${filtered.length === 0 ? '<div style="padding:40px;text-align:center;color:var(--text-muted);">Ничего не найдено</div>' : ''}
+      </div>
+
+      <button class="btn-secondary btn-dashed mt-20" style="width:100%;height:58px;border-radius:18px;" onclick="showAddTeaForm()">
+        + Добавить свой чай
+      </button>
+    </div>
+  `;
+}
+
+function showAddTeaForm() {
+  alert('Форма добавления чая будет здесь. Сейчас можно использовать существующие чаи из каталога.');
+}
+
+// ============================================
+// Screen: Tea Detail
+// ============================================
+function renderTeaDetail(teaId) {
+  const container = document.getElementById('screen-tea-detail');
+  if (!container) return;
+
+  const tea = getTea(teaId);
+  if (!tea) { navigate('catalog'); return; }
+
+  const cat = getCategory(tea.category);
+  const isFav = state.favorites.includes(teaId);
+  const tempStr = tea.temperature_min === tea.temperature_max
+    ? tea.temperature_min + '°C'
+    : tea.temperature_min + '–' + tea.temperature_max + '°C';
+
+  // NEW: render effects if present
+  let effectsHtml = '';
+  if (tea.effects && Object.keys(tea.effects).length > 0) {
+    effectsHtml = `
+      <div style="margin-top:16px;">
+        <span class="overline" style="margin-bottom:8px;">Эффекты</span>
+        <div style="display:flex;flex-wrap:wrap;gap:8px;">
+          ${Object.keys(tea.effects).map(k => {
+            const val = tea.effects[k];
+            return `<span class="tag" style="background:${cat.accent}22;color:${cat.accent};border:1px solid ${cat.accent}44;">${escapeHtml(val || k)}</span>`;
+          }).join('')}
+        </div>
+      </div>
+    `;
+  }
+
+  container.innerHTML = `
+    <div class="screen-content" style="padding-top:0;">
+      <div style="position:sticky;top:0;z-index:10;padding:12px 0;background:var(--bg-primary);margin:0 -20px 0;padding:12px 20px;">
+        <button class="btn-icon" style="width:40px;height:40px;border-radius:12px;font-size:20px;" onclick="goBack()">←</button>
+      </div>
+
+      <div class="tea-hero" style="background:var(--bg-secondary);">
+        <div class="pattern"></div>
+        <span class="label">фото сухого листа</span>
+        <span class="cn-name">${escapeHtml((tea.name_cn || '').split('·')[0].trim())}</span>
+      </div>
+
+      <div style="padding-top:22px;display:flex;flex-direction:column;gap:6px;">
+        <h1 class="font-display" style="font-weight:500;font-size:28px;line-height:1.1;color:var(--text-primary);">${escapeHtml(tea.name_ru)}</h1>
+        <span style="font-family:'Karla',sans-serif;font-weight:400;font-size:14px;line-height:1.3;color:var(--text-tertiary);">
+          ${escapeHtml(tea.name_cn || '')} · ${escapeHtml(tea.name_en || '')} · ${cat.name_ru}
+        </span>
+      </div>
+
+      <div class="info-grid mt-16">
+        <div class="info-cell">
+          <span class="label">Вода</span>
+          <span class="value">${tempStr}</span>
+        </div>
+        <div class="info-cell">
+          <span class="label">Заварка</span>
+          <span class="value">${tea.gaiwan_ratio_g_per_100ml} г / 100 мл</span>
+        </div>
+        <div class="info-cell">
+          <span class="label">Промывка</span>
+          <span class="value">${tea.rinse_recommended ? 'нужна' : 'не нужна'}</span>
+        </div>
+        <div class="info-cell">
+          <span class="label">Проливы</span>
+          <span class="value">до ${tea.max_infusions} · ${tea.first_steep_seconds}с +${tea.steep_increment_seconds}</span>
+        </div>
+      </div>
+
+      <p style="margin-top:20px;font-family:'Karla',sans-serif;font-weight:400;font-size:16px;line-height:1.55;color:var(--text-secondary);text-wrap:pretty;">
+        ${escapeHtml(tea.description_ru || '')}
+      </p>
+
+      <div style="margin-top:16px;display:flex;flex-wrap:wrap;gap:8px;">
+        ${(tea.tags || []).map(tag => `<span class="tag">${escapeHtml(tag)}</span>`).join('')}
+      </div>
+
+      ${effectsHtml}
+
+      <div style="margin-top:24px;display:flex;gap:12px;">
+        <button class="btn-primary" style="flex:1;height:64px;border-radius:20px;font-size:24px;" onclick="navigate('session-setup', {teaId:'${tea.id}'})">
+          Заварить
+        </button>
+        <button class="btn-icon" onclick="toggleTeaFavorite('${tea.id}')">
+          ${isFav ? '★' : '☆'}
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+async function toggleTeaFavorite(teaId) {
+  const isFav = await db.toggleFavorite(teaId);
+  if (isFav) state.favorites.push(teaId);
+  else state.favorites = state.favorites.filter(id => id !== teaId);
+  renderTeaDetail(teaId);
+}
+
+// ============================================
+// Screen: Session Setup
+// ============================================
+function renderSessionSetup(teaId) {
+  const container = document.getElementById('screen-session-setup');
+  if (!container) return;
+
+  const tea = getTea(teaId);
+  if (!tea) { navigate('catalog'); return; }
+
+  state.currentTea = tea;
+  const vesselMl = state.settings.default_vessel_ml;
+  const grams = calcGrams(tea, vesselMl);
+
+  const strength = state.settings.default_strength || 'medium';
+  const numInfusions = tea.max_infusions;
+  const scenario = generateScenario(tea, strength, numInfusions);
+  state.currentScenario = { tea, strength, numInfusions, vesselMl, grams, times: scenario };
+
+  container.innerHTML = `
+    <div class="screen-content">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+        <button class="btn-icon" style="width:40px;height:40px;border-radius:12px;font-size:20px;" onclick="goBack()">←</button>
+        <div>
+          <span class="overline" style="margin-bottom:0;">Перед сессией</span>
+          <h1 class="font-display" style="font-weight:500;font-size:30px;line-height:1.05;color:var(--text-primary);">${escapeHtml(tea.name_ru)}</h1>
+        </div>
+      </div>
+
+      <div style="margin-top:24px;display:flex;flex-direction:column;gap:10px;">
+        <span class="overline">Крепость</span>
+        <div class="segmented">
+          <button class="segment ${strength === 'light' ? 'active' : ''}" onclick="setStrength('light')">Лёгкая</button>
+          <button class="segment ${strength === 'medium' ? 'active' : ''}" onclick="setStrength('medium')">Средняя</button>
+          <button class="segment ${strength === 'strong' ? 'active' : ''}" onclick="setStrength('strong')">Крепкая</button>
+        </div>
+      </div>
+
+      <div style="margin-top:24px;display:flex;flex-direction:column;gap:12px;">
+        <div style="display:flex;justify-content:space-between;align-items:baseline;">
+          <span class="overline">Проливов</span>
+          <span class="font-display" style="font-weight:500;font-size:26px;color:var(--text-primary);" id="setup-infusion-count">${numInfusions}</span>
+        </div>
+        <div style="height:38px;display:flex;align-items:center;">
+          <div class="slider-track" onclick="handleInfusionTrackClick(event)">
+            <div class="slider-fill" id="setup-infusion-fill" style="width:${(numInfusions / tea.max_infusions) * 100}%"></div>
+            <div class="slider-thumb" id="setup-infusion-thumb" style="left:calc(${(numInfusions / tea.max_infusions) * 100}% - 15px)"></div>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:16px;display:flex;flex-direction:column;gap:10px;">
+        <span class="overline">Сценарий, секунды</span>
+        <div class="scenario-chips" id="setup-scenario-chips">
+          ${scenario.map((sec, i) => `<span class="scenario-chip">${sec}</span>`).join('')}
+        </div>
+      </div>
+
+      <div style="margin-top:20px;padding:16px 18px;border-radius:18px;border:1px solid var(--border-medium);display:flex;gap:18px;">
+        <span style="flex:1;display:flex;flex-direction:column;gap:3px;">
+          <span class="overline" style="margin-bottom:0;">Заварка</span>
+          <span class="font-display" style="font-weight:500;font-size:22px;color:var(--text-primary);">${grams} г</span>
+        </span>
+        <span style="width:1px;background:var(--border-medium);"></span>
+        <span style="flex:1;display:flex;flex-direction:column;gap:3px;">
+          <span class="overline" style="margin-bottom:0;">Посуда</span>
+          <span class="font-display" style="font-weight:500;font-size:22px;color:var(--text-primary);">${vesselMl} мл</span>
+        </span>
+        <span style="width:1px;background:var(--border-medium);"></span>
+        <span style="flex:1;display:flex;flex-direction:column;gap:3px;">
+          <span class="overline" style="margin-bottom:0;">Промывка</span>
+          <span class="font-display" style="font-weight:500;font-size:22px;color:var(--text-primary);">${tea.rinse_recommended ? 'да' : 'нет'}</span>
+        </span>
+      </div>
+
+      <div style="margin-top:24px;display:flex;flex-direction:column;gap:12px;">
+        <button class="btn-secondary" style="width:100%;height:52px;border-radius:20px;" onclick="navigate('custom-scenario')">
+          Настроить каждый пролив вручную
+        </button>
+        <button class="btn-primary btn-primary-lg" onclick="startSession()">
+          Начать
+        </button>
+      </div>
+    </div>
+  `;
+}
+
+function setStrength(s) {
+  if (!state.currentScenario) return;
+  state.currentScenario.strength = s;
+  state.settings.default_strength = s;
+  db.setSetting('default_strength', s);
+  updateScenarioPreview();
+  const segs = document.querySelectorAll('.segmented .segment');
+  segs.forEach((btn, i) => {
+    const val = ['light', 'medium', 'strong'][i];
+    btn.classList.toggle('active', val === s);
+  });
+}
+
+function handleInfusionTrackClick(e) {
+  if (!state.currentScenario) return;
+  const tea = state.currentScenario.tea;
+  const rect = e.currentTarget.getBoundingClientRect();
+  const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+  const max = tea.max_infusions;
+  const min = 1;
+  const val = Math.round(min + pct * (max - min));
+  state.currentScenario.numInfusions = val;
+  updateScenarioPreview();
+  updateInfusionSlider();
+}
+
+function updateInfusionSlider() {
+  const val = state.currentScenario.numInfusions;
+  const max = state.currentScenario.tea.max_infusions;
+  const pct = (val / max) * 100;
+  const fill = document.getElementById('setup-infusion-fill');
+  const thumb = document.getElementById('setup-infusion-thumb');
+  const count = document.getElementById('setup-infusion-count');
+  if (fill) fill.style.width = pct + '%';
+  if (thumb) thumb.style.left = `calc(${pct}% - 15px)`;
+  if (count) count.textContent = val;
+}
+
+function updateScenarioPreview() {
+  const sc = state.currentScenario;
+  if (!sc) return;
+  const times = generateScenario(sc.tea, sc.strength, sc.numInfusions);
+  sc.times = times;
+  const chips = document.getElementById('setup-scenario-chips');
+  if (chips) {
+    chips.innerHTML = times.map(sec => `<span class="scenario-chip">${sec}</span>`).join('');
+  }
+}
+
+function startSession() {
+  if (!state.currentScenario) return;
+  const sc = state.currentScenario;
+  state.currentSession = {
+    id: generateId(),
+    tea_id: sc.tea.id,
+    tea_name_snapshot: sc.tea.name_ru,
+    strength: sc.strength,
+    start_time: new Date().toISOString(),
+    end_time: null,
+    infusion_log: sc.times.map((planned, idx) => ({
+      index: idx,
+      planned_seconds: planned,
+      poured_at: null
+    })),
+    rating: null,
+    notes: '',
+    effects_snapshot: sc.tea.effects && Object.keys(sc.tea.effects).length > 0 ? { ...sc.tea.effects } : {}
+  };
+  state.customScenarioTimes = [...sc.times];
+  state.customScenarioName = '';
+  state.timerTargetEnd = null; // reset timer target
+  navigate('timer');
+}
+
+// ============================================
+// Screen: Custom Scenario
+// ============================================
+function renderCustomScenario() {
+  const container = document.getElementById('screen-custom-scenario');
+  if (!container) return;
+
+  const times = state.customScenarioTimes;
+  const maxSec = Math.max(...times, 90);
+
+  container.innerHTML = `
+    <div class="screen-content">
+      <div style="display:flex;align-items:center;gap:12px;margin-bottom:16px;">
+        <button class="btn-icon" style="width:40px;height:40px;border-radius:12px;font-size:20px;" onclick="goBack()">←</button>
+        <div>
+          <span class="overline" style="margin-bottom:0;">Кастомный сценарий</span>
+          <h1 class="font-display" style="font-weight:500;font-size:30px;line-height:1.05;color:var(--text-primary);">Своя лестница</h1>
+        </div>
+      </div>
+
+      <div style="margin-top:20px;display:flex;gap:10px;align-items:center;">
+        <span style="font-family:'Karla',sans-serif;font-weight:400;font-size:15px;color:var(--text-secondary);flex:1;">Сдвинуть все проливы</span>
+        <button class="btn-secondary" style="width:44px;height:44px;border-radius:14px;padding:0;font-size:20px;" onclick="shiftAll(-5)">−5</button>
+        <button class="btn-secondary" style="width:44px;height:44px;border-radius:14px;padding:0;font-size:20px;" onclick="shiftAll(5)">+5</button>
+      </div>
+
+      <div style="margin-top:18px;display:flex;flex-direction:column;gap:8px;">
+        ${times.map((sec, i) => {
+          const pct = Math.round((sec / maxSec) * 100);
+          return `
+          <div class="scenario-row">
+            <span class="idx">${i + 1}</span>
+            <span class="bar-bg"><span class="bar-fill" style="width:${pct}%"></span></span>
+            <input type="number" class="sec" value="${sec}" min="1" max="999" onchange="updateCustomTime(${i}, this.value)">
+            <span class="unit">с</span>
+          </div>
+          `;
+        }).join('')}
+        <button class="btn-secondary btn-dashed" style="height:52px;border-radius:16px;" onclick="addCustomInfusion()">
+          + Ещё пролив
+        </button>
+      </div>
+
+      <div style="margin-top:20px;display:flex;flex-direction:column;gap:10px;">
+        <div class="search-box" style="height:54px;border-radius:16px;">
+          <input type="text" placeholder="Имя пресета: «Дань цун, вечер»" value="${escapeHtml(state.customScenarioName)}" oninput="state.customScenarioName=this.value" style="color:var(--text-tertiary);">
+        </div>
+        <div style="display:flex;gap:12px;">
+          <button class="btn-secondary" style="flex:1;height:56px;border-radius:20px;" onclick="savePreset()">Сохранить</button>
+          <button class="btn-primary" style="flex:1;height:56px;border-radius:20px;font-size:22px;" onclick="startCustomSession()">Начать</button>
+        </div>
+      </div>
+    </div>
+  `;
+}
+
+function shiftAll(delta) {
+  state.customScenarioTimes = state.customScenarioTimes.map(t => Math.max(5, t + delta));
+  renderCustomScenario();
+}
+
+function updateCustomTime(idx, val) {
+  const v = parseInt(val) || 5;
+  state.customScenarioTimes[idx] = Math.max(5, v);
+  renderCustomScenario();
+}
+
+function addCustomInfusion() {
+  const last = state.customScenarioTimes[state.customScenarioTimes.length - 1] || 30;
+  state.customScenarioTimes.push(last + 5);
+  renderCustomScenario();
+}
+
+async function savePreset() {
+  if (!state.customScenarioName.trim()) {
+    alert('Введите имя пресета');
+    return;
+  }
+  await db.savePreset({
+    id: generateId(),
+    name: state.customScenarioName,
+    times: [...state.customScenarioTimes],
+    created_at: new Date().toISOString()
+  });
+  alert('Пресет сохранён!');
+}
+
+function startCustomSession() {
+  if (!state.currentTea) return;
+  const sc = state.currentScenario;
+  state.currentSession = {
+    id: generateId(),
+    tea_id: sc.tea.id,
+    tea_name_snapshot: sc.tea.name_ru,
+    strength: 'custom',
+    start_time: new Date().toISOString(),
+    end_time: null,
+    infusion_log: state.customScenarioTimes.map((planned, idx) => ({
+      index: idx,
+      planned_seconds: planned,
+      poured_at: null
+    })),
+    rating: null,
+    notes: '',
+    effects_snapshot: sc.tea.effects && Object.keys(sc.tea.effects).length > 0 ? { ...sc.tea.effects } : {}
+  };
+  state.timerTargetEnd = null;
+  navigate('timer');
+}
+
+// ============================================
+// Screen: Timer
+// ============================================
+function renderTimer() {
+  const container = document.getElementById('screen-timer');
+  if (!container) return;
+
+  const session = state.currentSession;
+  if (!session) { navigate('home'); return; }
+
+  const tea = getTea(session.tea_id);
+  const cat = tea ? getCategory(tea.category) : CATEGORIES[0];
+  const log = session.infusion_log;
+  const currentIdx = log.findIndex(i => i.poured_at === null && !i.skipped);
+  const currentInfusion = currentIdx >= 0 ? log[currentIdx] : null;
+
+  if (!currentInfusion) {
+    finishSession();
+    return;
+  }
+
+  const planned = currentInfusion.planned_seconds;
+  const totalInfusions = log.length;
+  const timeStr = new Date().getHours() + ':' + String(new Date().getMinutes()).padStart(2, '0');
+
+  // Цвета сорта
+  const accent = cat.accent;
+  const deep = adjustColor(accent, -48);
+  const lite = adjustColor(accent, 48);
+  const [ar, ag, ab] = hexToRgb(accent);
+  const mid = hexToRgb(adjustColor(accent, -24));
+  const onLiquid = contrastText(mid);
+
+  // Сколько осталось (если вернулись на экран таймера)
+  const remaining = state.timerTargetEnd
+    ? Math.max(0, Math.ceil((state.timerTargetEnd - Date.now()) / 1000))
+    : planned;
+
+  const nextPlanned = log[currentIdx + 1] ? log[currentIdx + 1].planned_seconds : null;
+  state.timerNextPlanned = nextPlanned;
+  state.timerCount = `Пролив ${currentIdx + 1} из ${totalInfusions}`;
+
+  const face = (cls) => `
+    <div class="vessel-text ${cls}">
+      <span class="t-count">${state.timerCount}</span>
+      <span class="t-time js-time">${formatTime(remaining)}</span>
+      <span class="t-next js-next"></span>
+    </div>`;
+
+  const ticks = Array.from({ length: TIMER_TICKS }, (_, i) =>
+    `<line x1="50" y1="1.6" x2="50" y2="4.4" transform="rotate(${i * (360 / TIMER_TICKS)} 50 50)"/>`
+  ).join('');
+
+  const dots = log.map((it, i) => {
+    let c = '';
+    if (it.skipped) c = 'skip';
+    else if (it.poured_at) c = 'done';
+    else if (i === currentIdx) c = 'cur';
+    return `<i class="${c}"></i>`;
+  }).join('');
+
+  const chips = [
+    tea && tea.name_cn ? `<span class="cn">${escapeHtml(tea.name_cn)}</span>` : '',
+    `<span>${state.currentScenario?.grams || '5'} г · ${state.currentScenario?.vesselMl || '120'} мл</span>`,
+    `<span>${tea ? tea.temperature_max : 100}°C</span>`
+  ].join('');
+
+  container.innerHTML = `
+    <div class="timer-screen active" id="timer-overlay"
+         style="--acc:${accent};--acc-rgb:${ar}, ${ag}, ${ab};--acc-deep:${deep};--acc-lite:${lite};--on-liquid:${onLiquid};">
+      <div class="t-bg"></div>
+
+      <div class="t-header">
+        <span class="t-status" id="t-status">Настой раскрывается</span>
+        <span class="t-clock">${timeStr}</span>
+      </div>
+
+      <div class="t-body">
+        <div class="vessel-wrap">
+          <div class="t-steam" aria-hidden="true">${'<svg viewBox="0 0 24 56"><path d="M12 54 C1 43 23 34 12 24 C4 16 16 9 12 2"/></svg>'.repeat(3)}</div>
+          <svg class="t-ticks" id="t-ticks" viewBox="0 0 100 100" aria-hidden="true">${ticks}</svg>
+          <div class="t-pulse"></div><div class="t-pulse"></div>
+
+          <div class="vessel" id="vessel" role="timer" aria-live="off">
+            <div class="liquid back" id="liquid-back"></div>
+            <div class="liquid front" id="liquid-front">
+              <div class="bubbles"><i></i><i></i><i></i><i></i><i></i><i></i></div>
+              ${face('inv')}
+            </div>
+            ${face('base')}
+            <div class="vessel-glass"></div>
+          </div>
+        </div>
+
+        <div class="t-dots" aria-hidden="true">${dots}</div>
+
+        <div class="t-info">
+          <span class="t-name">${escapeHtml(session.tea_name_snapshot)}</span>
+          <div class="t-meta">${chips}</div>
+        </div>
+      </div>
+
+      <div class="t-actions">
+        <button class="btn-pour" id="btn-pour" onclick="pourTea()">Слил</button>
+        <div class="t-row">
+          <button class="t-btn" onclick="skipInfusion()">Пропустить</button>
+          <button class="t-btn danger" onclick="finishSession()">Завершить</button>
+        </div>
+      </div>
+    </div>
+  `;
+
+  startTimer(planned);
+}
+
+// ---- Таймер: логика ----
+const TIMER_TICKS = 60;
+const WAVE_TILE = { front: 150, back: 210 };
+const REDUCED_MOTION = window.matchMedia && matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function hexToRgb(hex) {
+  const n = parseInt(hex.replace('#', ''), 16);
+  return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+function _lin(c) { c /= 255; return c <= 0.03928 ? c / 12.92 : Math.pow((c + 0.055) / 1.055, 2.4); }
+function _lum([r, g, b]) { return 0.2126 * _lin(r) + 0.7152 * _lin(g) + 0.0722 * _lin(b); }
+// Тёмный или светлый текст читается лучше на этом цвете настоя?
+function contrastText(rgb) {
+  const L = _lum(rgb);
+  const dark = _lum([30, 27, 21]), light = _lum([253, 248, 235]);
+  const cDark = (L + 0.05) / (dark + 0.05);
+  const cLight = (light + 0.05) / (L + 0.05);
+  return cDark >= cLight ? '#1E1B15' : '#FDF8EB';
+}
+
+// Прогресс 0..1 по реальному времени (не зависит от тиков интервала)
+function timerProgress() {
+  if (!state.timerTargetEnd || !state.timerTotal) return 0;
+  const left = (state.timerTargetEnd - Date.now()) / 1000;
+  return Math.min(1, Math.max(0, 1 - left / state.timerTotal));
+}
+
+function startTimer(seconds) {
+  stopTimer();
+  state.timerTotal = seconds;
+  if (!state.timerTargetEnd) {           // новый пролив
+    state.timerTargetEnd = Date.now() + seconds * 1000;
+    state.timerNotified = false;
+  }
+  state.timerRunning = true;
+
+  if (state.settings.keep_screen_on) requestWakeLock();
+
+  updateTimerDisplay();
+  // Интервал живёт и после конца — считает «перестой»
+  state.timerInterval = setInterval(updateTimerDisplay, 1000);
+  // Точный выстрел ровно в конец (интервал может «поплыть» в фоне)
+  const ms = Math.max(0, state.timerTargetEnd - Date.now()) + 30;
+  state.timerEndTimeout = setTimeout(updateTimerDisplay, ms);
+  startTimerFrames();
+}
+
+function stopTimerLoops() {
+  if (state.timerInterval) { clearInterval(state.timerInterval); state.timerInterval = null; }
+  if (state.timerEndTimeout) { clearTimeout(state.timerEndTimeout); state.timerEndTimeout = null; }
+  if (state.timerRaf) { cancelAnimationFrame(state.timerRaf); state.timerRaf = null; }
+}
+
+function stopTimer() {
+  stopTimerLoops();
+  state.timerRunning = false;
+  releaseWakeLock();
+}
+
+// Плавная анимация: уровень настоя, волны, тики, «энергия»
+function startTimerFrames() {
+  const root = document.getElementById('timer-overlay');
+  const vessel = document.getElementById('vessel');
+  const front = document.getElementById('liquid-front');
+  const back = document.getElementById('liquid-back');
+  const ticks = root ? root.querySelectorAll('#t-ticks line') : [];
+  if (!root || !vessel || !front || !back) return;
+
+  let last = performance.now();
+  let pa = Math.random() * WAVE_TILE.front;
+  let pb = Math.random() * WAVE_TILE.back;
+  let lastOn = -1, lastEnergy = -1;
+
+  const frame = (now) => {
+    if (!document.getElementById('timer-overlay')) { state.timerRaf = null; return; }
+    state.timerRaf = requestAnimationFrame(frame);
+
+    const dt = Math.min(0.1, (now - last) / 1000);
+    last = now;
+
+    const p = timerProgress();
+    const level = 0.08 + 0.86 * p;                     // кружка никогда не «переполнена» до краёв
+    vessel.style.setProperty('--p', level.toFixed(4));
+
+    // Чем ближе конец — тем «кипучее»
+    const energy = 0.35 + 0.65 * Math.pow(p, 1.4);
+    if (Math.abs(energy - lastEnergy) > 0.01) {
+      root.style.setProperty('--energy', energy.toFixed(3));
+      lastEnergy = energy;
+    }
+
+    if (!REDUCED_MOTION) {
+      const speed = 18 + energy * 62;                  // px/с
+      pa = (pa + dt * speed) % WAVE_TILE.front;
+      pb = (pb - dt * speed * 0.62 + WAVE_TILE.back) % WAVE_TILE.back;
+      front.style.setProperty('--wx', (-pa).toFixed(1) + 'px');
+      back.style.setProperty('--wx', (-pb).toFixed(1) + 'px');
+    }
+
+    const on = Math.floor(p * TIMER_TICKS);
+    if (on !== lastOn) {
+      ticks.forEach((t, i) => {
+        t.classList.toggle('on', i < on);
+        t.classList.toggle('head', i === on && p < 1);
+      });
+      lastOn = on;
+    }
+  };
+  state.timerRaf = requestAnimationFrame(frame);
+}
+
+function updateTimerDisplay() {
+  if (!state.timerTargetEnd) return;
+  const root = document.getElementById('timer-overlay');
+  if (!root) return;
+
+  const msLeft = state.timerTargetEnd - Date.now();
+  const remaining = Math.max(0, Math.ceil(msLeft / 1000));
+  const over = Math.max(0, Math.floor(-msLeft / 1000));
+  state.timerRemaining = remaining;
+  const done = msLeft <= 0;
+  const p = timerProgress();
+
+  root.querySelectorAll('.js-time').forEach(el => { el.textContent = formatTime(remaining); });
+
+  let next;
+  if (done) next = over >= 2 ? `перестаивает  +${formatTime(over)}` : 'время вышло';
+  else next = state.timerNextPlanned ? `дальше ${formatTime(state.timerNextPlanned)}` : 'последний пролив';
+  root.querySelectorAll('.js-next').forEach(el => { el.textContent = next; });
+
+  const status = document.getElementById('t-status');
+  if (status) {
+    status.textContent = done ? 'Пора сливать'
+      : p < 0.4 ? 'Настой раскрывается'
+      : p < 0.8 ? 'Набирает силу'
+      : 'Почти готово';
+  }
+
+  const pourBtn = document.getElementById('btn-pour');
+  if (done && !root.classList.contains('is-done')) {
+    root.classList.add('is-done');
+    if (pourBtn) pourBtn.textContent = 'Слить!';
+  }
+
+  if (done && !state.timerNotified) {
+    state.timerNotified = true;
+    timerFinished();
+  }
+}
+
+function timerFinished() {
+  if (state.settings.sound_enabled) playGong();
+  if (state.settings.vibration_enabled && navigator.vibrate) {
+    navigator.vibrate([200, 100, 400]);
+  }
+  notifyBrewReady();
+}
+
+// На Android Chrome `new Notification()` бросает исключение — нужен showNotification через SW.
+// Показываем только если приложение свёрнуто: на экране и так видно «Пора сливать».
+async function notifyBrewReady() {
+  try {
+    if (!('Notification' in window) || Notification.permission !== 'granted') return;
+    if (!document.hidden) return;
+    const opts = {
+      body: 'Пролив готов — сливайте чай',
+      icon: 'assets/TeaTimer.png',
+      badge: 'assets/TeaTimer.png',
+      tag: 'teatimer-ready',
+      renotify: true,
+      vibrate: [200, 100, 400]
+    };
+    const reg = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : null;
+    if (reg && reg.showNotification) await reg.showNotification('TeaTimer 🍵', opts);
+    else new Notification('TeaTimer 🍵', opts);
+  } catch (e) { console.warn('Notification failed', e); }
+}
+
+// Вернулись в приложение — сразу догоняем время и возвращаем wake lock
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden || state.currentScreen !== 'timer' || !state.timerTargetEnd) return;
+  updateTimerDisplay();
+  if (state.timerRunning && state.settings && state.settings.keep_screen_on && !state.wakeLock) requestWakeLock();
+});
+
+function playGong() {
+  const audio = document.getElementById('gong-sound');
+  if (audio) {
+    audio.currentTime = 0;
+    audio.play().catch(() => {});
+  }
+}
+
+function pourTea() {
+  const session = state.currentSession;
+  if (!session) return;
+  const idx = session.infusion_log.findIndex(i => i.poured_at === null && !i.skipped);
+  if (idx >= 0) {
+    session.infusion_log[idx].poured_at = new Date().toISOString();
+    db.saveSession(session);
+  }
+  stopTimer();
+  state.timerTargetEnd = null;
+  if (navigator.vibrate && state.settings.vibration_enabled) navigator.vibrate(14);
+  const nextIdx = session.infusion_log.findIndex(i => i.poured_at === null && !i.skipped);
+  if (nextIdx >= 0) {
+    renderTimer();
+  } else {
+    finishSession();
+  }
+}
+
+function skipInfusion() {
+  const session = state.currentSession;
+  if (!session) return;
+  const idx = session.infusion_log.findIndex(i => i.poured_at === null && !i.skipped);
+  if (idx >= 0) {
+    session.infusion_log[idx].skipped = true;
+    db.saveSession(session);
+  }
+  stopTimer();
+  state.timerTargetEnd = null;
+  const nextIdx = session.infusion_log.findIndex(i => i.poured_at === null && !i.skipped);
+  if (nextIdx >= 0) {
+    renderTimer();
+  } else {
+    finishSession();
+  }
+}
+
+async function finishSession() {
+  stopTimer();
+  state.timerTargetEnd = null;
+  const session = state.currentSession;
+  if (session && !session.end_time) {
+    session.end_time = new Date().toISOString();
+    await db.saveSession(session);
+    state.sessions = await db.getSessions();
+  }
+  state.currentSession = null;
+  navigate('history');
+}
+
+// Wake Lock
+async function requestWakeLock() {
+  try {
+    if ('wakeLock' in navigator) {
+      state.wakeLock = await navigator.wakeLock.request('screen');
+    }
+  } catch (e) { console.warn('Wake lock failed', e); }
+}
+
+function releaseWakeLock() {
+  if (state.wakeLock) {
+    state.wakeLock.release().catch(() => {});
+    state.wakeLock = null;
+  }
+}
+
+// ============================================
+// Screen: History
+// ============================================
+function renderHistory() {
+  const container = document.getElementById('screen-history');
+  if (!container) return;
+
+  const sessions = state.sessions ? [...state.sessions].sort((a, b) => new Date(b.start_time) - new Date(a.start_time)) : [];
+
+  // Stats
+  const totalSessions = sessions.length;
+  const totalMinutes = sessions.reduce((sum, s) => {
+    const start = new Date(s.start_time);
+    const end = s.end_time ? new Date(s.end_time) : new Date(start.getTime() + 30*60000);
+    return sum + Math.round((end - start) / 60000);
+  }, 0);
+  const teaCounts = {};
+  sessions.forEach(s => { teaCounts[s.tea_name_snapshot] = (teaCounts[s.tea_name_snapshot] || 0) + 1; });
+  const topTea = Object.entries(teaCounts).sort((a, b) => b[1] - a[1])[0]?.[0] || '—';
+
+  // Group by ISO date
+  const groups = {};
+  sessions.forEach(s => {
+    const dateKey = new Date(s.start_time).toISOString().split('T')[0];
+    if (!groups[dateKey]) groups[dateKey] = [];
+    groups[dateKey].push(s);
+  });
+
+  const todayStr = new Date().toISOString().split('T')[0];
+
+  container.innerHTML = `
+    <div class="screen-content">
+      <div style="margin-bottom: 16px;">
+        <h1 class="font-display" style="font-weight:500;font-size:32px;line-height:1.05;color:var(--text-primary);">История</h1>
+      </div>
+
+      <div class="stat-grid mb-20">
+        <div class="stat-tile">
+          <span class="value">${totalSessions}</span>
+          <span class="label">чаепитий</span>
+        </div>
+        <div class="stat-tile">
+          <span class="value">${Math.round(totalMinutes / 60)} ч</span>
+          <span class="label">всего</span>
+        </div>
+        <div class="stat-tile">
+          <span class="value">${escapeHtml(topTea)}</span>
+          <span class="label">чаще всего</span>
+        </div>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        ${Object.entries(groups).map(([dateKey, daySessions]) => {
+          const isToday = dateKey === todayStr;
+          const label = isToday ? 'Сегодня' : formatShortDate(daySessions[0].start_time);
+          return `
+          <div>
+            <span class="overline" style="margin-bottom:8px;display:block;">${label}</span>
+            <div style="display:flex;flex-direction:column;gap:8px;">
+              ${daySessions.map((s, sIdx) => {
+                if (isToday && sIdx === 0) {
+                  const start = new Date(s.start_time);
+                  const end = s.end_time ? new Date(s.end_time) : start;
+                  const duration = Math.round((end - start) / 60000);
+                  const infusions = s.infusion_log.filter(i => i.poured_at).length;
+                  const maxTime = Math.max(...s.infusion_log.map(i => i.planned_seconds), 1);
+                  const tea = getTea(s.tea_id);
+                  const cat = tea ? getCategory(tea.category) : null;
+                  let effectsHtml = '';
+                  if (s.effects_snapshot && Object.keys(s.effects_snapshot).length > 0 && cat) {
+                    effectsHtml = `
+                      <div style="margin-top:12px;">
+                        <div style="display:flex;flex-wrap:wrap;gap:6px;">
+                          ${Object.keys(s.effects_snapshot).map(k => {
+                            const val = s.effects_snapshot[k];
+                            return `<span class="tag" style="background:${cat.accent}22;color:${cat.accent};border:1px solid ${cat.accent}44;font-size:13px;padding:4px 10px;">${escapeHtml(val || k)}</span>`;
+                          }).join('')}
+                        </div>
+                      </div>
+                    `;
+                  }
+                  return `
+                  <div class="session-card">
+                    <div class="header">
+                      <span class="title">${escapeHtml(s.tea_name_snapshot)}</span>
+                      <span class="rating">${'★'.repeat(s.rating || 0)}${'☆'.repeat(5 - (s.rating || 0))}</span>
+                    </div>
+                    <div class="meta">
+                      <span>${String(start.getHours()).padStart(2,'0')}:${String(start.getMinutes()).padStart(2,'0')} → ${String(end.getHours()).padStart(2,'0')}:${String(end.getMinutes()).padStart(2,'0')}</span>
+                      <span>${duration} мин</span>
+                      <span>${infusions} проливов</span>
+                    </div>
+                    <div class="chart">
+                      ${s.infusion_log.map((inf, i) => {
+                        const h = Math.round((inf.planned_seconds / maxTime) * 100);
+                        return `<span class="bar ${i === 3 ? 'highlight' : ''}" style="height:${h}%"></span>`;
+                      }).join('')}
+                    </div>
+                    ${s.notes ? `<p class="note">${escapeHtml(s.notes)}</p>` : ''}
+                    ${effectsHtml}
+                  </div>
+                  `;
+                } else {
+                  const start = new Date(s.start_time);
+                  const end = s.end_time ? new Date(s.end_time) : start;
+                  const duration = Math.round((end - start) / 60000);
+                  const infusions = s.infusion_log.filter(i => i.poured_at).length;
+                  return `
+                  <div class="history-row">
+                    <span class="time">${String(start.getHours()).padStart(2,'0')}:${String(start.getMinutes()).padStart(2,'0')}</span>
+                    <span class="name">${escapeHtml(s.tea_name_snapshot)}</span>
+                    <span class="info">${infusions} пр · ${duration} мин</span>
+                  </div>
+                  `;
+                }
+              }).join('')}
+            </div>
+          </div>
+          `;
+        }).join('')}
+        ${sessions.length === 0 ? '<div style="padding:60px 20px;text-align:center;color:var(--text-muted);"><p class="font-display" style="font-size:24px;margin-bottom:8px;">Пока пусто</p><p style="font-size:15px;">Заварите первый чай — и история появится здесь</p></div>' : ''}
+      </div>
+    </div>
+  `;
+}
+
+// ============================================
+// Screen: Settings
+// ============================================
+function renderSettings() {
+  const container = document.getElementById('screen-settings');
+  if (!container) return;
+
+  const s = state.settings || {};
+
+  container.innerHTML = `
+    <div class="screen-content">
+      <div style="margin-bottom: 24px;">
+        <h1 class="font-display" style="font-weight:500;font-size:32px;line-height:1.05;color:var(--text-primary);">Настройки</h1>
+      </div>
+
+      <div style="display:flex;flex-direction:column;gap:26px;">
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <span class="overline">Сигнал</span>
+          <div class="settings-row">
+            <span class="label">Звук гонга</span>
+            <div class="toggle ${s.sound_enabled ? 'on' : ''}" onclick="toggleSetting('sound_enabled')">
+              <span class="knob"></span>
+            </div>
+          </div>
+          <div class="settings-row">
+            <span class="label">Вибрация</span>
+            <div class="toggle ${s.vibration_enabled ? 'on' : ''}" onclick="toggleSetting('vibration_enabled')">
+              <span class="knob"></span>
+            </div>
+          </div>
+          <div class="settings-row">
+            <div>
+              <span class="label">Не гасить экран</span>
+              <span class="sublabel">на время сессии</span>
+            </div>
+            <div class="toggle ${s.keep_screen_on ? 'on' : ''}" onclick="toggleSetting('keep_screen_on')">
+              <span class="knob"></span>
+            </div>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:10px;">
+          <span class="overline">Вид</span>
+          <div class="segmented">
+            <button class="segment ${s.theme === 'light' ? 'active' : ''}" onclick="setTheme('light')">Светлая</button>
+            <button class="segment ${s.theme === 'dark' ? 'active' : ''}" onclick="setTheme('dark')">Тёмная</button>
+            <button class="segment ${s.theme === 'system' ? 'active' : ''}" onclick="setTheme('system')">Как в системе</button>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:2px;">
+          <span class="overline" style="padding-bottom:8px;">Данные</span>
+          <div class="settings-row" style="cursor:pointer;" onclick="exportData()">
+            <span class="label">Экспорт в JSON</span>
+            <span style="font-family:'Karla',sans-serif;font-weight:500;font-size:14px;color:var(--text-tertiary);">→</span>
+          </div>
+          <div class="settings-row" style="cursor:pointer;" onclick="importData()">
+            <span class="label">Импорт</span>
+            <span style="font-family:'Karla',sans-serif;font-weight:500;font-size:14px;color:var(--text-tertiary);">→</span>
+          </div>
+          <div class="settings-row" style="cursor:pointer;" onclick="clearAllData()">
+            <span class="label" style="color:var(--accent-red);">Очистить все данные</span>
+          </div>
+        </div>
+      </div>
+
+      <div style="margin-top:40px;display:flex;flex-direction:column;gap:4px;">
+        <span style="font-family:'Karla',sans-serif;font-weight:400;font-size:13px;line-height:1.4;color:var(--text-tertiary);">Всё хранится только на этом устройстве. Сервера нет.</span>
+        <span style="font-family:'Karla',sans-serif;font-weight:400;font-size:13px;line-height:1.4;color:var(--text-muted);">TeaTimer 1.0 · база чаёв: ${TEAS.length} позиций</span>
+      </div>
+    </div>
+  `;
+}
+
+async function toggleSetting(key) {
+  const val = !state.settings[key];
+  state.settings[key] = val;
+  await db.setSetting(key, val);
+  renderSettings();
+  if (key === 'sound_enabled' && val) playGong();
+}
+
+async function setTheme(theme) {
+  state.settings.theme = theme;
+  await db.setSetting('theme', theme);
+  applyTheme();
+  renderSettings();
+}
+
+async function exportData() {
+  const data = {
+    sessions: await db.getSessions(),
+    favorites: await db.getFavorites(),
+    customTeas: await db.getCustomTeas(),
+    presets: await db.getPresets(),
+    settings: state.settings,
+    exportDate: new Date().toISOString(),
+    version: '1.0'
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `teatimer-backup-${new Date().toISOString().split('T')[0]}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function importData() {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.json';
+  input.onchange = async (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const data = JSON.parse(text);
+      if (data.sessions) {
+        for (const s of data.sessions) await db.saveSession(s);
+      }
+      if (data.favorites) {
+        const existing = new Set(await db.getFavorites());
+        for (const f of data.favorites) {
+          if (!existing.has(f)) await db.toggleFavorite(f);
+        }
+      }
+      if (data.customTeas) {
+        for (const t of data.customTeas) await db.saveCustomTea(t);
+      }
+      if (data.presets) {
+        for (const p of data.presets) await db.savePreset(p);
+      }
+      alert('Данные импортированы!');
+      await loadAppData();
+      navigate('home');
+    } catch (err) {
+      alert('Ошибка импорта: ' + err.message);
+    }
+  };
+  input.click();
+}
+
+async function clearAllData() {
+  if (!confirm('Все сессии, избранное и настройки будут удалены. Продолжить?')) return;
+  const req = indexedDB.deleteDatabase(DB_NAME);
+  req.onsuccess = () => {
+    alert('Данные очищены. Перезагрузите страницу.');
+    location.reload();
+  };
+}
+
+// ============================================
+// Color utility
+// ============================================
+function adjustColor(hex, amount) {
+  const num = parseInt(hex.replace('#', ''), 16);
+  const r = Math.max(0, Math.min(255, (num >> 16) + amount));
+  const g = Math.max(0, Math.min(255, ((num >> 8) & 0x00FF) + amount));
+  const b = Math.max(0, Math.min(255, (num & 0x0000FF) + amount));
+  return '#' + ((r << 16) | (g << 8) | b).toString(16).padStart(6, '0');
+}
+
+// ============================================
+// Build App Shell
+// ============================================
+function buildAppShell() {
+  const app = document.getElementById('app');
+  if (!app) return;
+
+  app.innerHTML = `
+    <!-- Screens -->
+    <div class="screen active" id="screen-home"></div>
+    <div class="screen" id="screen-catalog"></div>
+    <div class="screen" id="screen-tea-detail"></div>
+    <div class="screen" id="screen-session-setup"></div>
+    <div class="screen" id="screen-custom-scenario"></div>
+    <div class="screen" id="screen-history"></div>
+    <div class="screen" id="screen-settings"></div>
+
+    <!-- Timer overlay -->
+    <div class="timer-screen" id="screen-timer"></div>
+
+    <!-- Bottom Navigation -->
+    <nav class="bottom-nav">
+      <button class="nav-item active" onclick="navigate('home')">
+        <span class="icon">
+          <svg width="20" height="20" viewBox="0 0 24 24"><path d="M4 10h16v10a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2z"/><path d="M8 10V7a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v3"/></svg>
+        </span>
+        <span class="label">Чай</span>
+      </button>
+      <button class="nav-item" onclick="navigate('catalog')">
+        <span class="icon">
+          <svg width="20" height="20" viewBox="0 0 24 24"><line x1="4" y1="6" x2="20" y2="6"/><line x1="4" y1="12" x2="20" y2="12"/><line x1="4" y1="18" x2="14" y2="18"/></svg>
+        </span>
+        <span class="label">Каталог</span>
+      </button>
+      <button class="nav-item" onclick="navigate('history')">
+        <span class="icon">
+          <svg width="20" height="20" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+        </span>
+        <span class="label">История</span>
+      </button>
+      <button class="nav-item" onclick="navigate('settings')">
+        <span class="icon">
+          <svg width="20" height="20" viewBox="0 0 24 24"><circle cx="12" cy="12" r="1"/><circle cx="19" cy="12" r="1"/><circle cx="5" cy="12" r="1"/></svg>
+        </span>
+        <span class="label">Ещё</span>
+      </button>
+    </nav>
+  `;
+}
+
+// ============================================
+// Data Loading
+// ============================================
+async function loadTeaData() {
+  try {
+    const res = await fetch('teas.json');
+    TEAS_DATA = await res.json();
+    CATEGORIES = TEAS_DATA.categories || [];
+    TEAS = TEAS_DATA.teas || [];
+    if (TEAS_DATA.strength_multiplier) STRENGTH_MULTIPLIER = TEAS_DATA.strength_multiplier;
+  } catch (e) {
+    console.error('Failed to load teas.json', e);
+    CATEGORIES = [{id:'green',name_ru:'Зелёный',accent:'#B6C158'}];
+    TEAS = [{id:'long-jing',name_ru:'Лун Цзин',name_cn:'西湖龙井',category:'green',temperature_min:80,temperature_max:85,gaiwan_ratio_g_per_100ml:4,rinse_recommended:false,first_steep_seconds:20,steep_increment_seconds:5,max_infusions:5,description_ru:'Колодец дракона',tags:['классический']}];
+  }
+}
+
+async function loadAppData() {
+  state.settings = await db.getSettings();
+  state.favorites = await db.getFavorites();
+  state.sessions = await db.getSessions();
+  applyTheme();
+}
+
+// ============================================
+// Notification Permission
+// ============================================
+function requestNotificationPermission() {
+  if ('Notification' in window && Notification.permission === 'default') {
+    Notification.requestPermission();
+  }
+}
+
+// ============================================
+// Service Worker
+// ============================================
+function registerSW() {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(err => {
+      console.warn('SW registration failed', err);
+    });
+  }
+}
+
+// ============================================
+// Initialization
+// ============================================
+async function init() {
+  buildAppShell();
+  await loadTeaData();
+  await db.init();
+  await loadAppData();
+  registerSW();
+  requestNotificationPermission();
+  
+  // Hide loader when app is ready
+  const loader = document.getElementById('app-loader');
+  if (loader) {
+    loader.classList.add('hidden');
+  }
+  
+  navigate('home');
+}
+
+// Start when DOM ready
+if (document.readyState === 'loading') {
+  document.addEventListener('DOMContentLoaded', init);
+} else {
+  init();
+}

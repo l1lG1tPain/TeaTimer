@@ -1,11 +1,10 @@
 /* ============================================
-   TeaTimer 1.2 — логика приложения
+   TeaTimer — Application Logic (Fixed)
    ============================================ */
 
 // ============================================
 // Constants & Config
 // ============================================
-const APP_VERSION = '1.2';
 const DB_NAME = 'TeaTimerDB';
 const DB_VERSION = 1;
 // Fallback only — overwritten by teas.json's own strength_multiplier once it
@@ -216,6 +215,17 @@ function formatTime(totalSeconds) {
   return m + ':' + String(s).padStart(2, '0');
 }
 
+function formatDate(dateStr) {
+  const d = new Date(dateStr);
+  const options = { weekday: 'long', day: 'numeric', month: 'long' };
+  return d.toLocaleDateString('ru-RU', options);
+}
+
+function formatShortDate(dateStr) {
+  const d = new Date(dateStr);
+  return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long' });
+}
+
 function formatDuration(minutes) {
   if (minutes < 60) return minutes + ' мин';
   const h = Math.floor(minutes / 60);
@@ -232,6 +242,10 @@ function generateScenario(tea, strength, numInfusions) {
     times.push(base + tea.steep_increment_seconds * i);
   }
   return times;
+}
+
+function shiftScenario(times, delta) {
+  return times.map(t => Math.max(5, t + delta));
 }
 
 function calcGrams(tea, vesselMl) {
@@ -266,6 +280,7 @@ const state = {
   currentScenario: null,
   currentSession: null,
   timerInterval: null,
+  timerRemaining: 0,
   timerTotal: 0,
   timerRunning: false,
   timerTargetEnd: null, // timestamp when timer should finish
@@ -276,10 +291,7 @@ const state = {
   customScenarioName: '',
   favorites: [],
   sessions: [],
-  presets: [],
-  todayMood: null,
-  teaForm: null,
-  storagePersisted: false
+  historyFilter: 'all'
 };
 
 // ============================================
@@ -1353,7 +1365,6 @@ function updateScenarioPreview() {
 
 function startSession() {
   if (!state.currentScenario) return;
-  requestNotificationPermission();
   const sc = state.currentScenario;
   state.currentSession = {
     id: generateId(),
@@ -1396,6 +1407,7 @@ function renderCustomScenario() {
   const tea = sc && sc.tea;
   const cat = tea ? getCategory(tea.category) : null;
   const maxSec = Math.max(...times, 90);
+  const total = times.reduce((a, b) => a + b, 0);
   const canDelete = times.length > 1;
   const presets = state.presets || [];
 
@@ -1571,7 +1583,6 @@ async function savePreset() {
 
 function startCustomSession() {
   if (!state.currentTea) return;
-  requestNotificationPermission();
   const sc = state.currentScenario;
   state.currentSession = {
     id: generateId(),
@@ -2654,6 +2665,7 @@ function openSessionSheet(id, opts = {}) {
   const totalActual = rows.reduce((a, r) => a + (r.actual || 0), 0);
   const totalOver = rows.reduce((a, r) => a + r.over, 0);
   const totalPlanned = rows.filter(r => r.actual).reduce((a, r) => a + r.planned, 0);
+  const strengthName = { light: 'лёгкая', medium: 'средняя', strong: 'крепкая' }[s.strength] || '—';
 
   const sheet = document.createElement('div');
   sheet.id = 'session-sheet';
@@ -2845,7 +2857,7 @@ function renderSettings() {
 
       <div style="margin-top:40px;display:flex;flex-direction:column;gap:4px;">
         <span style="font-family:'Karla',sans-serif;font-weight:400;font-size:13px;line-height:1.4;color:var(--text-tertiary);">Всё хранится только на этом устройстве. Сервера нет.</span>
-        <span style="font-family:'Karla',sans-serif;font-weight:400;font-size:13px;line-height:1.4;color:var(--text-muted);">TeaTimer ${APP_VERSION} · база чаёв: ${TEAS.length} позиций</span>
+        <span style="font-family:'Karla',sans-serif;font-weight:400;font-size:13px;line-height:1.4;color:var(--text-muted);">TeaTimer 1.0 · база чаёв: ${TEAS.length} позиций</span>
       </div>
     </div>
   `;
@@ -3085,27 +3097,19 @@ function registerSW() {
 async function init() {
   buildAppShell();
   initPullToRefresh();
-  try {
-    await loadTeaData();
-    await db.init();
-    await loadAppData();
-  } catch (e) {
-    console.error('Init failed', e);
-    const sub = document.getElementById('loader-subtitle');
-    if (sub) sub.innerHTML = 'Не удалось открыть хранилище данных.<br>Закройте приватный режим или разрешите сайту хранить данные.<br><button class="btn-secondary" style="margin-top:14px;padding:10px 18px" onclick="location.reload()">Повторить</button>';
-    const sp = document.querySelector('.loader-spinner'); if (sp) sp.style.display = 'none';
-    return;
-  }
+  await loadTeaData();
+  await db.init();
+  await loadAppData();
   registerSW();
-
+  requestNotificationPermission();
+  
+  // Hide loader when app is ready
   const loader = document.getElementById('app-loader');
-  if (loader) loader.classList.add('hidden');
-
-  // Ярлыки из manifest: ?action=brew | catalog
-  const action = new URLSearchParams(location.search).get('action');
-  if (action === 'catalog') navigate('catalog');
-  else if (action === 'brew') { navigate('home'); handleQuickBrew(); }
-  else navigate('home');
+  if (loader) {
+    loader.classList.add('hidden');
+  }
+  
+  navigate('home');
 }
 
 // ============================================
@@ -3231,52 +3235,29 @@ function initPullToRefresh() {
   app.addEventListener('touchend', end, { passive: true });
   app.addEventListener('touchcancel', end, { passive: true });
 
+  window.__ptrSim = { pull(d) { dist = d; pulling = true; armed = true; raf = requestAnimationFrame(tick); }, get done() { return done; } };
 }
 
-// Обновление: данные + свежие файлы приложения.
-// Кэш не удаляем вслепую: сначала скачиваем новые файлы, и только если всё получилось — подменяем и перезагружаем.
-const APP_FILES = ['./', './index.html', './styles.css', './app.js', './teas.json', './manifest.json'];
+// Обновление: данные + проверка новой версии приложения
 async function refreshApp() {
   const t0 = Date.now();
   try { await loadAppData(); } catch (e) { console.warn(e); }
-  let updated = false, failed = false;
-  if (!navigator.onLine) {
-    failed = true;
-  } else if (!('caches' in window)) {
-    updated = true;                         // нет Cache API — просто перезагружаем страницу
-  } else {
-    try {
-      const get = async u => {
-        const ctl = new AbortController();
-        const tm = setTimeout(() => ctl.abort(), 8000);
-        try {
-          const r = await fetch(u, { cache: 'reload', signal: ctl.signal });
-          return r.ok && !r.redirected ? [u, r] : null;
-        } catch (e) { return null; } finally { clearTimeout(tm); }
-      };
-      const res = (await Promise.all(APP_FILES.map(get))).filter(Boolean);
-      const core = ['./app.js', './styles.css'].every(c => res.some(x => x[0] === c));
-      if (core) {
-        const keys = (await caches.keys()).filter(k => !k.includes('sounds'));
-        const name = keys.includes('teatimer-v' + APP_VERSION) ? 'teatimer-v' + APP_VERSION : (keys[keys.length - 1] || 'teatimer-v' + APP_VERSION);
-        const cache = await caches.open(name);
-        await Promise.all(res.map(([u, r]) => cache.put(u, r).catch(() => {})));
-        updated = true;
-      } else failed = true;
-      try {
-        const reg = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : null;
-        if (reg) await reg.update();
-      } catch (e) { /* не критично */ }
-    } catch (e) { console.warn('Refresh failed', e); failed = true; }
+  let online = navigator.onLine;
+  if (online) {
+    try { const r = await fetch('./sw.js?r=' + Date.now(), { cache: 'no-store' }); online = r.ok; } catch (e) { online = false; }
   }
-  await new Promise(r => setTimeout(r, Math.max(0, 600 - (Date.now() - t0))));
-  if (updated || (failed && navigator.onLine)) {
+  if (online) {
+    try {
+      const reg = 'serviceWorker' in navigator ? await navigator.serviceWorker.getRegistration() : null;
+      if (reg) await reg.update();
+      const keys = await caches.keys();
+      await Promise.all(keys.filter(k => !k.includes('sounds')).map(k => caches.delete(k)));
+    } catch (e) { console.warn(e); }
+    await new Promise(r => setTimeout(r, Math.max(0, 500 - (Date.now() - t0))));
     location.reload();
-    await new Promise(() => {});
+    await new Promise(() => {});          // дальше страница перезагрузится
   } else {
     _renderTop();
-    if (failed) showToast(navigator.onLine ? 'Не удалось обновить, попробуйте позже' : 'Нет сети — данные обновлены локально');
-    else showToast('Данные обновлены');
   }
 }
 
